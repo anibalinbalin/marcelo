@@ -11,9 +11,10 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
 
-interface ParsedLine {
+export interface ParsedLine {
   label: string;
   values: number[];
+  page: number; // 1-indexed page number
 }
 
 /**
@@ -55,8 +56,10 @@ def parse_number(s):
     if s.startswith('-'):
         neg = True
         s = s[1:]
-    dots = s.count('.')
-    if dots > 1:
+    # ALL dots are thousands separators in Chilean MUS$ statements
+    # "665.902" = 665,902 (3 digits after dot = thousands separator)
+    parts_by_dot = s.split('.')
+    if len(parts_by_dot) > 1 and all(len(p) == 3 or i == 0 for i, p in enumerate(parts_by_dot) if i > 0):
         s = s.replace('.', '')
     s = s.replace(',', '').replace(' ', '')
     try:
@@ -68,7 +71,8 @@ def parse_number(s):
 pdf_path = sys.argv[1]
 results = []
 with pdfplumber.open(pdf_path) as pdf:
-    for page in pdf.pages[:15]:
+    for page_idx, page in enumerate(pdf.pages[:15]):
+        page_num = page_idx + 1
         text = page.extract_text() or ''
         for line in text.split('\\n'):
             line = line.strip()
@@ -84,7 +88,7 @@ with pdfplumber.open(pdf_path) as pdf:
                 if n is not None:
                     values.append(n)
             if values:
-                results.append({'label': label, 'values': values})
+                results.append({'label': label, 'values': values, 'page': page_num})
 
 print(json.dumps(results, ensure_ascii=False))
 `;
@@ -120,11 +124,12 @@ async function extractPdfTextNode(pdfBuffer: Buffer): Promise<ParsedLine[]> {
   const { extractText } = await import("unpdf");
   const result = await extractText(new Uint8Array(pdfBuffer), { mergePages: false });
 
-  // Concatenate first 15 pages
   const pages = result.text?.slice(0, 15) ?? [];
-  const fullText = pages.join("\n");
-
-  return parseTextLines(fullText);
+  const allLines: ParsedLine[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    allLines.push(...parseTextLines(pages[i], i + 1));
+  }
+  return allLines;
 }
 
 function parseNumber(s: string): number | null {
@@ -142,9 +147,17 @@ function parseNumber(s: string): number | null {
     s = s.slice(1);
   }
 
+  // In Chilean IFRS MUS$ statements, dots are ALWAYS thousands separators.
+  // "665.902" = 665,902 (not 665.902). "3.372.610" = 3,372,610.
+  // Rule: if a dot is followed by exactly 3 digits (and end-of-string or another dot),
+  // it's a thousands separator. Otherwise treat as decimal.
   const dotCount = (s.match(/\./g) || []).length;
-  if (dotCount > 1) {
-    s = s.replace(/\./g, "");
+  if (dotCount > 0) {
+    // Check if ALL dots are followed by exactly 3 digits
+    const allDotsAreThousands = s.split(".").slice(1).every((part) => /^\d{3}/.test(part));
+    if (allDotsAreThousands) {
+      s = s.replace(/\./g, "");
+    }
   }
   s = s.replace(/,/g, "").replace(/\s/g, "");
 
@@ -153,12 +166,11 @@ function parseNumber(s: string): number | null {
   return negative ? -val : val;
 }
 
-function parseTextLines(text: string): ParsedLine[] {
+function parseTextLines(text: string, pageNum: number = 1): ParsedLine[] {
   const lines = text.split("\n");
   const results: ParsedLine[] = [];
 
   // Pattern: numbers in IFRS format — e.g., "3.372.610", "(2.157.881)", "39.774", "-"
-  // Numbers can have dots as thousands separators and parens for negatives
   const numberPattern = /(?:\([\d.]+\)|(?<!\w)-?[\d.]+(?:,\d+)?)/g;
 
   for (const rawLine of lines) {
@@ -166,22 +178,16 @@ function parseTextLines(text: string): ParsedLine[] {
     if (!line || line.length < 5) continue;
     if (/^(nota|note|pag|page|\d{1,2}[\./])/i.test(line)) continue;
 
-    // Find all numbers in the line
     const matches = [...line.matchAll(numberPattern)];
     if (matches.length === 0) continue;
 
-    // The label is everything before the first number match
     const firstMatchIdx = matches[0].index!;
     let label = line.substring(0, firstMatchIdx).trim();
-
-    // Skip if label is too short or empty
     if (!label || label.length < 3) continue;
 
-    // Strip trailing note references like " 28" or " 33"
     label = label.replace(/\s+\d{1,3}$/, "").trim();
     if (!label) continue;
 
-    // Parse all the number matches
     const values: number[] = [];
     for (const m of matches) {
       const num = parseNumber(m[0]);
@@ -189,7 +195,7 @@ function parseTextLines(text: string): ParsedLine[] {
     }
 
     if (values.length > 0) {
-      results.push({ label, values });
+      results.push({ label, values, page: pageNum });
     }
   }
 

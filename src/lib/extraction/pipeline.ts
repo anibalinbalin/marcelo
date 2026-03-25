@@ -11,7 +11,7 @@ import { getDb } from "@/db";
 import { fieldMappings, extractionRuns, extractedValues } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { extractPdfTables, type PdfSection } from "@/lib/pdf/extract";
-import { extractPdfText } from "@/lib/pdf/extract-text";
+import { extractPdfText, type ParsedLine } from "@/lib/pdf/extract-text";
 import { runValidation, type ValidationInput } from "@/lib/validation/engine";
 
 // ── Value transforms ────────────────────────────────────────────────────────
@@ -93,64 +93,83 @@ function stripNoteRef(label: string): string {
 }
 
 /**
- * Get the first "real" value from an IFRS data line, skipping small numbers
- * that are likely note references (e.g., "28", "33", "6").
- * Real financial values in MUS$ are typically > 100.
+ * Get the value at a specific column index from an IFRS data line,
+ * skipping small positive integers that are note references.
+ *
+ * @param values - All numeric values extracted from the line
+ * @param colIndex - Target column index among "real" values (after filtering notes).
+ *                   0 = first real value, 2 = third, etc.
  */
-function getFirstRealValue(values: number[]): number | null {
-  for (const v of values) {
-    // Skip small positive integers that look like note references
-    if (Number.isInteger(v) && v > 0 && v < 100) continue;
-    return v;
-  }
-  // If all values were small, return the first one (it might be legitimate)
-  return values[0] ?? null;
+function getRealValueAtIndex(values: number[], colIndex: number): number | null {
+  // Filter out note references: small numbers 0-99 (including decimals like 27.6)
+  // In MUS$ statements, real financial values are always >= 100
+  const realValues = values.filter((v) => Math.abs(v) >= 100);
+  return realValues[colIndex] ?? null;
 }
 
 /**
  * Match a label against extracted text lines from an IFRS PDF.
- * Returns the first real numeric value found on the matching line.
+ *
+ * @param colIndex - Which column to extract (0-based among real values).
+ * @param pageRange - Optional [min, max] page range to restrict search.
+ *   Income statement items should only search income statement pages.
+ *   Balance sheet items should only search balance sheet pages.
  */
 function findValueInText(
-  lines: { label: string; values: number[] }[],
-  sourceLabel: string
+  lines: ParsedLine[],
+  sourceLabel: string,
+  colIndex: number = 0,
+  pageRange?: [number, number]
 ): { value: number; confidence: number } | null {
   const normalized = sourceLabel.toLowerCase().trim();
 
-  // Pass 1: exact match (after stripping note refs and [Subtotal])
-  for (const line of lines) {
+  // Filter by page range if specified
+  const filtered = pageRange
+    ? lines.filter((l) => l.page >= pageRange[0] && l.page <= pageRange[1])
+    : lines;
+
+  function tryMatch(
+    line: ParsedLine,
+    confidence: number
+  ): { value: number; confidence: number } | null {
+    const val = getRealValueAtIndex(line.values, colIndex);
+    if (val !== null) return { value: val, confidence };
+    const fallback = getRealValueAtIndex(line.values, 0);
+    if (fallback !== null) return { value: fallback, confidence: confidence * 0.7 };
+    return null;
+  }
+
+  // Pass 1: exact match
+  for (const line of filtered) {
     const stripped = stripNoteRef(line.label).toLowerCase().trim();
     if (stripped === normalized) {
-      const val = getFirstRealValue(line.values);
-      if (val !== null) {
-        return { value: val, confidence: 1.0 };
-      }
+      const result = tryMatch(line, 1.0);
+      if (result) return result;
     }
   }
 
-  // Pass 2: starts-with match (prefer more specific)
-  for (const line of lines) {
+  // Pass 2: starts-with match — prefer the LONGER label (more specific)
+  let bestStartsWith: { line: ParsedLine; overlap: number } | null = null;
+  for (const line of filtered) {
     const stripped = stripNoteRef(line.label).toLowerCase().trim();
     if (stripped.startsWith(normalized) || normalized.startsWith(stripped)) {
-      // Require reasonable length overlap to avoid false positives
       const overlap = Math.min(stripped.length, normalized.length);
-      if (overlap >= 10) {
-        const val = getFirstRealValue(line.values);
-        if (val !== null) {
-          return { value: val, confidence: 0.9 };
-        }
+      if (overlap >= 10 && (!bestStartsWith || stripped.length > bestStartsWith.overlap)) {
+        bestStartsWith = { line, overlap: stripped.length };
       }
     }
   }
+  if (bestStartsWith) {
+    const result = tryMatch(bestStartsWith.line, 0.9);
+    if (result) return result;
+  }
 
-  // Pass 3: contains match (least confident)
-  for (const line of lines) {
+  // Pass 3: contains match
+  for (const line of filtered) {
     const stripped = stripNoteRef(line.label).toLowerCase().trim();
     if (stripped.includes(normalized) || normalized.includes(stripped)) {
-      const val = getFirstRealValue(line.values);
-      if (val !== null) {
-        return { value: val, confidence: 0.75 };
-      }
+      const result = tryMatch(line, 0.75);
+      if (result) return result;
     }
   }
 
@@ -216,7 +235,7 @@ export async function runExtractionPipeline(runId: number): Promise<{
 
   // Extract data using appropriate method
   let sections: PdfSection[] = [];
-  let textLines: { label: string; values: number[] }[] = [];
+  let textLines: ParsedLine[] = [];
 
   if (isIfrsText) {
     textLines = await extractPdfText(fileBuffer);
@@ -244,8 +263,25 @@ export async function runExtractionPipeline(runId: number): Promise<{
       continue;
     }
 
+    // For IFRS text extraction:
+    // sourceCol specifies column index and page range:
+    //   "q"  = quarterly standalone (col 2 of 4), income statement pages (6-7)
+    //   "bs" = balance sheet current (col 0 of 3), balance sheet pages (4-5)
+    //   "cf" = cash flow current (col 0 of 2), cash flow pages (9-10)
+    const colIndex = mapping.sourceCol === "q" ? 2
+      : mapping.sourceCol === "bs" ? 0
+      : mapping.sourceCol === "cf" ? 0
+      : 0;
+
+    // Page ranges for Enel Chile IFRS filing structure
+    const pageRange: [number, number] | undefined =
+      mapping.sourceCol === "q" ? [6, 7]
+      : mapping.sourceCol === "bs" ? [4, 5]
+      : mapping.sourceCol === "cf" ? [9, 10]
+      : undefined;
+
     const match = isIfrsText
-      ? findValueInText(textLines, mapping.sourceLabel)
+      ? findValueInText(textLines, mapping.sourceLabel, colIndex, pageRange)
       : findValueInSection(sections, mapping.sourceSection, mapping.sourceLabel);
 
     if (!match) {
