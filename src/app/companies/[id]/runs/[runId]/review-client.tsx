@@ -66,7 +66,7 @@ function StatusBadge({ status }: { status: string }) {
 
 export function ReviewClient({ company, run, values }: ReviewClientProps) {
   const router = useRouter();
-  const [showFlaggedOnly, setShowFlaggedOnly] = useState(true);
+  const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [analystName, setAnalystName] = useState("");
   const [overrides, setOverrides] = useState<Map<number, string>>(new Map());
   const [isApproving, setIsApproving] = useState(false);
@@ -243,7 +243,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
                   size="sm"
                   onClick={() => setShowFlaggedOnly((prev) => !prev)}
                 >
-                  {showFlaggedOnly ? "Show flagged only" : "Show all"}
+                  {showFlaggedOnly ? "Show all" : "Show flagged only"}
                 </Button>
               </div>
 

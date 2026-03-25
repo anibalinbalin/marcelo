@@ -55,12 +55,6 @@ export default async function CompanyDetailPage({
             </div>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" asChild>
-              <Link href={`/companies/${id}/template`}>Upload Template</Link>
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <Link href={`/companies/${id}/mappings`}>Manage Mappings</Link>
-            </Button>
             <Button size="sm" asChild>
               <Link href={`/companies/${id}/upload`}>Upload New Quarter</Link>
             </Button>

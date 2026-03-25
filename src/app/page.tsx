@@ -39,9 +39,7 @@ export default async function DashboardPage() {
               Quarterly financial report auto-populator
             </p>
           </div>
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/companies/new">Add Company</Link>
-          </Button>
+          {/* Add Company page is a v2 feature — companies are seeded via CLI */}
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
