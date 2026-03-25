@@ -18,14 +18,14 @@ const BIMBO_PROJ_MAPPINGS = [
   { sourceSection: "[310000]", sourceLabel: "Utilidad (pérdida) antes de impuestos", targetSheet: "PROJ", targetRow: 29, valueTransform: "divide_1000000", validationSign: null },
   { sourceSection: "[310000]", sourceLabel: "Impuestos a la utilidad", targetSheet: "PROJ", targetRow: 31, valueTransform: "negate_divide_1000000", validationSign: "negative" },
   { sourceSection: "[310000]", sourceLabel: "Utilidad (pérdida) neta", targetSheet: "PROJ", targetRow: 35, valueTransform: "divide_1000000", validationSign: null },
-  { sourceSection: "[310000]", sourceLabel: "Participación no controladora en la utilidad", targetSheet: "PROJ", targetRow: 33, valueTransform: "negate_divide_1000000", validationSign: null },
+  { sourceSection: "[310000]", sourceLabel: "Utilidad (pérdida) atribuible a la participación no controladora", targetSheet: "PROJ", targetRow: 33, valueTransform: "negate_divide_1000000", validationSign: null },
 
   // Balance Sheet (Section [210000])
   { sourceSection: "[210000]", sourceLabel: "Efectivo y equivalentes de efectivo", targetSheet: "PROJ", targetRow: 42, valueTransform: "divide_1000000", validationSign: "positive" },
   { sourceSection: "[210000]", sourceLabel: "Total de activos circulantes", targetSheet: "PROJ", targetRow: 45, valueTransform: "divide_1000000", validationSign: "positive" },
   { sourceSection: "[210000]", sourceLabel: "Total de activos", targetSheet: "PROJ", targetRow: 55, valueTransform: "divide_1000000", validationSign: "positive" },
   { sourceSection: "[210000]", sourceLabel: "Total de pasivos circulantes", targetSheet: "PROJ", targetRow: 60, valueTransform: "divide_1000000", validationSign: "positive" },
-  { sourceSection: "[210000]", sourceLabel: "Total de pasivos", targetSheet: "PROJ", targetRow: 70, valueTransform: "divide_1000000", validationSign: "positive" },
+  { sourceSection: "[210000]", sourceLabel: "Total pasivos", targetSheet: "PROJ", targetRow: 70, valueTransform: "divide_1000000", validationSign: "positive" },
   { sourceSection: "[210000]", sourceLabel: "Total de capital contable", targetSheet: "PROJ", targetRow: 80, valueTransform: "divide_1000000", validationSign: "positive" },
 ];
 

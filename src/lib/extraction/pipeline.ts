@@ -52,29 +52,38 @@ function findValueInSection(
 
   const normalizedLabel = sourceLabel.toLowerCase().trim();
 
+  // Collect all candidate matches with scores, then pick the best one.
+  // This avoids returning the first "contains" match when a better one exists later.
+  let bestMatch: { value: number; confidence: number; lengthDiff: number } | null = null;
+
   for (const table of section.tables) {
     for (const row of table.rows) {
       const rowLabel = row.label.toLowerCase().trim();
+      const lastValue = [...row.values].reverse().find((v) => v !== null);
+      if (lastValue === null || lastValue === undefined) continue;
 
-      // Exact match
+      let confidence = 0;
+      const lengthDiff = Math.abs(rowLabel.length - normalizedLabel.length);
+
       if (rowLabel === normalizedLabel) {
-        const lastValue = [...row.values].reverse().find((v) => v !== null);
-        if (lastValue !== null && lastValue !== undefined) {
-          return { value: lastValue, confidence: 1.0 };
-        }
+        // Exact match — return immediately
+        return { value: lastValue, confidence: 1.0 };
+      } else if (rowLabel.includes(normalizedLabel) || normalizedLabel.includes(rowLabel)) {
+        // Contains match — prefer the one with the smallest length difference
+        // (i.e., "Total pasivos" is a better match for "Total de pasivos" than
+        // "Total de pasivos circulantes distintos de los pasivos atribuibles...")
+        confidence = 0.85;
       }
 
-      // Contains match
-      if (rowLabel.includes(normalizedLabel) || normalizedLabel.includes(rowLabel)) {
-        const lastValue = [...row.values].reverse().find((v) => v !== null);
-        if (lastValue !== null && lastValue !== undefined) {
-          return { value: lastValue, confidence: 0.85 };
+      if (confidence > 0) {
+        if (!bestMatch || lengthDiff < bestMatch.lengthDiff) {
+          bestMatch = { value: lastValue, confidence, lengthDiff };
         }
       }
     }
   }
 
-  return null;
+  return bestMatch ? { value: bestMatch.value, confidence: bestMatch.confidence } : null;
 }
 
 // ── Label matching (IFRS text) ──────────────────────────────────────────────

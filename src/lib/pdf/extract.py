@@ -9,20 +9,61 @@ If no section codes given, extracts all known financial sections.
 import pdfplumber
 import json
 import sys
-import re
 
 KNOWN_SECTIONS = ["[210000]", "[310000]", "[410000]", "[520000]", "[610000]", "[700000]", "[700002]", "[800001]", "[800005]", "[800100]", "[800200]"]
 
 def find_sections(pdf):
-    """Find which pages contain each section code."""
-    section_pages = {}
+    """Find which pages contain each section code, including continuation pages.
+
+    BIVA sections can span multiple pages (e.g., balance sheet assets on page 13,
+    liabilities/equity on page 14). Continuation pages have a table with the same
+    column count but don't repeat the section code. We include them by scanning
+    forward from each tagged page until we hit another section code or a page
+    with no matching table.
+    """
+    # First pass: find pages that explicitly contain section codes
+    page_sections = {}  # page_idx -> set of codes on that page
+    all_tagged_pages = set()
     for i, page in enumerate(pdf.pages):
         text = page.extract_text() or ""
         for code in KNOWN_SECTIONS:
             if code in text:
-                if code not in section_pages:
-                    section_pages[code] = []
-                section_pages[code].append(i)
+                page_sections.setdefault(i, set()).add(code)
+                all_tagged_pages.add(i)
+
+    # Second pass: for each section, scan forward to find continuation pages
+    section_pages = {}
+    for page_idx, codes in sorted(page_sections.items()):
+        for code in codes:
+            if code not in section_pages:
+                section_pages[code] = []
+            if page_idx not in section_pages[code]:
+                section_pages[code].append(page_idx)
+
+            # Get column count from the tagged page's table
+            tables = pdf.pages[page_idx].extract_tables()
+            if not tables:
+                continue
+            ref_col_count = len(max(tables, key=lambda t: len(t))[0]) if tables else 0
+
+            # Scan forward for continuation pages
+            for next_idx in range(page_idx + 1, len(pdf.pages)):
+                if next_idx in all_tagged_pages:
+                    break  # hit another section's page
+                if next_idx in section_pages.get(code, []):
+                    break  # already included
+
+                next_tables = pdf.pages[next_idx].extract_tables()
+                if not next_tables:
+                    break  # no table = end of section
+
+                next_col_count = len(max(next_tables, key=lambda t: len(t))[0])
+                if next_col_count != ref_col_count:
+                    break  # different table structure = different section
+
+                # This is a continuation page
+                section_pages[code].append(next_idx)
+
     return section_pages
 
 def parse_number(s):
