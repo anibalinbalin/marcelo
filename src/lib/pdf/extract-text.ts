@@ -81,7 +81,7 @@ with pdfplumber.open(pdf_path) as pdf:
             if len(parts) < 2: continue
             label = parts[0].strip()
             if not label or len(label) < 3: continue
-            if re.match(r'^(nota|note|pag|page|\\d{1,2}[./])', label, re.I): continue
+            if re.match(r'^(nota\\b|note\\b|página|page\\b|\\d{1,2}[./])', label, re.I): continue
             values = []
             for p in parts[1:]:
                 n = parse_number(p.strip())
@@ -177,7 +177,7 @@ function parseTextLines(text: string, pageNum: number = 1): ParsedLine[] {
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line || line.length < 5) continue;
-    if (/^(nota|note|pag|page|\d{1,2}[\./])/i.test(line)) continue;
+    if (/^(nota\b|note\b|página|page\b|\d{1,2}[\./])/i.test(line)) continue;
 
     const matches = [...line.matchAll(numberPattern)];
     if (matches.length === 0) continue;
