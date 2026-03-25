@@ -102,7 +102,29 @@ export async function approveValues(
     .where(eq(extractionRuns.id, runId))
     .returning();
 
-  return run;
+  // Generate populated Excel and upload to Blob
+  try {
+    const { generatePopulatedExcel } = await import("@/lib/writeback");
+    const { put } = await import("@vercel/blob");
+
+    const result = await generatePopulatedExcel(runId);
+    const blob = await put(
+      `output/${run.companyId}/${run.quarter}/${result.filename}`,
+      result.buffer,
+      { access: "public" }
+    );
+
+    // Store output URL on the run
+    await db
+      .update(extractionRuns)
+      .set({ outputFileUrl: blob.url })
+      .where(eq(extractionRuns.id, runId));
+
+    return { ...run, outputFileUrl: blob.url };
+  } catch {
+    // Writeback failed but approval succeeded — user can retry download later
+    return run;
+  }
 }
 
 export async function cancelRun(runId: number) {

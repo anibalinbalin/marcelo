@@ -143,8 +143,11 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
   const handleDownload = useCallback(() => {
     if (run.outputFileUrl) {
       window.open(run.outputFileUrl, "_blank");
+    } else {
+      // Fallback: generate on-demand via the download API route
+      window.open(`/api/download/${run.id}`, "_blank");
     }
-  }, [run.outputFileUrl]);
+  }, [run.outputFileUrl, run.id]);
 
   const isApproved = localStatus === "approved";
 
@@ -298,7 +301,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
             onApprove={handleApprove}
             onDownload={handleDownload}
             isApproved={isApproved || isApproving}
-            isDownloadReady={isApproved && run.outputFileUrl !== null}
+            isDownloadReady={isApproved}
           />
         )}
     </div>
