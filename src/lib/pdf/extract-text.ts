@@ -171,7 +171,8 @@ function parseTextLines(text: string, pageNum: number = 1): ParsedLine[] {
   const results: ParsedLine[] = [];
 
   // Pattern: numbers in IFRS format — e.g., "3.372.610", "(2.157.881)", "39.774", "-"
-  const numberPattern = /(?:\([\d.]+\)|(?<!\w)-?[\d.]+(?:,\d+)?)/g;
+  // Negative lookahead (?![a-z]) prevents matching "6." from note refs like "6.d)"
+  const numberPattern = /(?:\([\d.]+\)|(?<!\w)-?[\d.]+(?![a-z])(?:,\d+)?)/gi;
 
   for (const rawLine of lines) {
     const line = rawLine.trim();

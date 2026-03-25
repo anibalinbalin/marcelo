@@ -273,11 +273,12 @@ export async function runExtractionPipeline(runId: number): Promise<{
       : mapping.sourceCol === "cf" ? 0
       : 0;
 
-    // Page ranges for Enel Chile IFRS filing structure
+    // Page ranges for IFRS filing structure
+    // Ranges are generous to handle PDF renderers that shift page boundaries
     const pageRange: [number, number] | undefined =
-      mapping.sourceCol === "q" ? [6, 7]
-      : mapping.sourceCol === "bs" ? [4, 5]
-      : mapping.sourceCol === "cf" ? [9, 10]
+      mapping.sourceCol === "q" ? [5, 8]     // income statement (usually pages 6-7)
+      : mapping.sourceCol === "bs" ? [3, 6]   // balance sheet (usually pages 4-5)
+      : mapping.sourceCol === "cf" ? [8, 12]  // cash flow (usually pages 9-10)
       : undefined;
 
     const match = isIfrsText
