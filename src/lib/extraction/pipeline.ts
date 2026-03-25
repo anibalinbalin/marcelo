@@ -93,8 +93,23 @@ function stripNoteRef(label: string): string {
 }
 
 /**
+ * Get the first "real" value from an IFRS data line, skipping small numbers
+ * that are likely note references (e.g., "28", "33", "6").
+ * Real financial values in MUS$ are typically > 100.
+ */
+function getFirstRealValue(values: number[]): number | null {
+  for (const v of values) {
+    // Skip small positive integers that look like note references
+    if (Number.isInteger(v) && v > 0 && v < 100) continue;
+    return v;
+  }
+  // If all values were small, return the first one (it might be legitimate)
+  return values[0] ?? null;
+}
+
+/**
  * Match a label against extracted text lines from an IFRS PDF.
- * Returns the first numeric value found on the matching line.
+ * Returns the first real numeric value found on the matching line.
  */
 function findValueInText(
   lines: { label: string; values: number[] }[],
@@ -102,24 +117,39 @@ function findValueInText(
 ): { value: number; confidence: number } | null {
   const normalized = sourceLabel.toLowerCase().trim();
 
-  // Pass 1: exact match (after stripping note refs)
+  // Pass 1: exact match (after stripping note refs and [Subtotal])
   for (const line of lines) {
     const stripped = stripNoteRef(line.label).toLowerCase().trim();
     if (stripped === normalized) {
-      const val = line.values[0];
-      if (val !== undefined && val !== null) {
+      const val = getFirstRealValue(line.values);
+      if (val !== null) {
         return { value: val, confidence: 1.0 };
       }
     }
   }
 
-  // Pass 2: contains match
+  // Pass 2: starts-with match (prefer more specific)
+  for (const line of lines) {
+    const stripped = stripNoteRef(line.label).toLowerCase().trim();
+    if (stripped.startsWith(normalized) || normalized.startsWith(stripped)) {
+      // Require reasonable length overlap to avoid false positives
+      const overlap = Math.min(stripped.length, normalized.length);
+      if (overlap >= 10) {
+        const val = getFirstRealValue(line.values);
+        if (val !== null) {
+          return { value: val, confidence: 0.9 };
+        }
+      }
+    }
+  }
+
+  // Pass 3: contains match (least confident)
   for (const line of lines) {
     const stripped = stripNoteRef(line.label).toLowerCase().trim();
     if (stripped.includes(normalized) || normalized.includes(stripped)) {
-      const val = line.values[0];
-      if (val !== undefined && val !== null) {
-        return { value: val, confidence: 0.85 };
+      const val = getFirstRealValue(line.values);
+      if (val !== null) {
+        return { value: val, confidence: 0.75 };
       }
     }
   }

@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
     // Upload to Vercel Blob
     const blob = await put(`reports/${parsedCompanyId}/${quarter}/${file.name}`, file, {
       access: "public",
+      addRandomSuffix: true,
     });
 
     // Create extraction run

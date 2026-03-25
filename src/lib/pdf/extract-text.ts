@@ -114,33 +114,15 @@ print(json.dumps(results, ensure_ascii=False))
 
 /**
  * Node.js fallback for Vercel serverless (no Python).
- * Uses pdf-parse PDFParse class.
+ * Uses unpdf for pure JS PDF text extraction.
  */
 async function extractPdfTextNode(pdfBuffer: Buffer): Promise<ParsedLine[]> {
-  const pdfParseModule = await import("pdf-parse");
-  const PDFParseClass = (pdfParseModule as Record<string, unknown>).PDFParse as {
-    new (data: Uint8Array): {
-      load(): Promise<void>;
-      getInfo(): Promise<{ numPages?: number }>;
-      getPageText(page: number): Promise<string>;
-    };
-  };
+  const { extractText } = await import("unpdf");
+  const result = await extractText(new Uint8Array(pdfBuffer), { mergePages: false });
 
-  const parser = new PDFParseClass(new Uint8Array(pdfBuffer));
-  await parser.load();
-
-  const info = await parser.getInfo();
-  const numPages = info.numPages || 15;
-
-  let fullText = "";
-  for (let i = 1; i <= Math.min(15, numPages); i++) {
-    try {
-      const pageText = await parser.getPageText(i);
-      fullText += pageText + "\n";
-    } catch {
-      break;
-    }
-  }
+  // Concatenate first 15 pages
+  const pages = result.text?.slice(0, 15) ?? [];
+  const fullText = pages.join("\n");
 
   return parseTextLines(fullText);
 }
@@ -175,20 +157,34 @@ function parseTextLines(text: string): ParsedLine[] {
   const lines = text.split("\n");
   const results: ParsedLine[] = [];
 
+  // Pattern: numbers in IFRS format — e.g., "3.372.610", "(2.157.881)", "39.774", "-"
+  // Numbers can have dots as thousands separators and parens for negatives
+  const numberPattern = /(?:\([\d.]+\)|(?<!\w)-?[\d.]+(?:,\d+)?)/g;
+
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (!line || line.length < 3) continue;
+    if (!line || line.length < 5) continue;
+    if (/^(nota|note|pag|page|\d{1,2}[\./])/i.test(line)) continue;
 
-    const parts = line.split(/\s{2,}/);
-    if (parts.length < 2) continue;
+    // Find all numbers in the line
+    const matches = [...line.matchAll(numberPattern)];
+    if (matches.length === 0) continue;
 
-    const label = parts[0].trim();
-    if (!label || label.length < 2) continue;
-    if (/^(nota|note|pag|page|\d{1,2}[\./])/i.test(label)) continue;
+    // The label is everything before the first number match
+    const firstMatchIdx = matches[0].index!;
+    let label = line.substring(0, firstMatchIdx).trim();
 
+    // Skip if label is too short or empty
+    if (!label || label.length < 3) continue;
+
+    // Strip trailing note references like " 28" or " 33"
+    label = label.replace(/\s+\d{1,3}$/, "").trim();
+    if (!label) continue;
+
+    // Parse all the number matches
     const values: number[] = [];
-    for (let i = 1; i < parts.length; i++) {
-      const num = parseNumber(parts[i].trim());
+    for (const m of matches) {
+      const num = parseNumber(m[0]);
       if (num !== null) values.push(num);
     }
 

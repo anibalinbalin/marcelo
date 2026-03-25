@@ -59,11 +59,9 @@ async function extractPdfTablesNode(
   pdfBuffer: Buffer,
   sectionCodes?: string[]
 ): Promise<PdfSection[]> {
-  // Dynamic import — pdf-parse may export as default or named
-  const pdfParseModule = await import("pdf-parse");
-  const pdfParseFn = (pdfParseModule as Record<string, unknown>).default ?? pdfParseModule;
-  const data = await (pdfParseFn as unknown as (buf: Buffer) => Promise<{ text: string }>)(pdfBuffer);
-  const text = data.text;
+  const { extractText } = await import("unpdf");
+  const result = await extractText(new Uint8Array(pdfBuffer), { mergePages: true });
+  const text = result.text ?? "";
 
   const lines = text.split("\n").map((l: string) => l.trim()).filter(Boolean);
   const filterCodes = sectionCodes ? new Set(sectionCodes) : null;
