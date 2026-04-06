@@ -224,7 +224,140 @@ function findValueInText(
   return null;
 }
 
-// ── Excel source extraction ────────────────────────────────────────────────
+// ── Excel source extraction (Python fallback for large files) ──────────────
+
+/**
+ * Python-based Excel extraction using openpyxl. Handles large files that crash ExcelJS.
+ */
+async function extractFromExcelPython(
+  fileBuffer: Buffer,
+  mappings: typeof fieldMappings.$inferSelect[],
+  runId: number,
+  errors: string[]
+): Promise<{ extracted: number; validated: number; errors: string[] }> {
+  const { spawn } = await import("child_process");
+  const { writeFile, unlink } = await import("fs/promises");
+  const { join } = await import("path");
+  const { tmpdir } = await import("os");
+  const { randomUUID } = await import("crypto");
+
+  const tmpPath = join(tmpdir(), `excel-extract-${randomUUID()}.xlsx`);
+  await writeFile(tmpPath, fileBuffer);
+  const db = getDb();
+
+  try {
+    // Group mappings by sheet+column
+    const groups = new Map<string, typeof mappings>();
+    for (const m of mappings) {
+      if (!m.sourceSection || !m.sourceCol) continue;
+      const key = `${m.sourceSection}::${m.sourceCol}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(m);
+    }
+
+    const valuesToInsert: {
+      runId: number;
+      mappingId: number;
+      extractedValue: string;
+      confidence: number;
+    }[] = [];
+
+    for (const [key, groupMappings] of groups) {
+      const [sheetName, targetHeader] = key.split("::");
+
+      // Run Python extractor
+      const result = await new Promise<string>((resolve, reject) => {
+        const scriptPath = join(process.cwd(), "src/lib/pdf/extract-excel.py");
+        const proc = spawn("python3", [scriptPath, tmpPath, sheetName, targetHeader, "0,1"]);
+        let stdout = "";
+        let stderr = "";
+        proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+        proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+        proc.on("close", (code: number | null) => {
+          if (code !== 0) reject(new Error(`Python Excel extraction failed: ${stderr}`));
+          else resolve(stdout.trim());
+        });
+      });
+
+      const parsed = JSON.parse(result) as { error?: string; data?: Record<string, number> };
+      if (parsed.error) {
+        errors.push(parsed.error);
+        continue;
+      }
+
+      const labelMap = parsed.data ?? {};
+
+      for (const mapping of groupMappings) {
+        const normalized = mapping.sourceLabel.toLowerCase().trim();
+        let value: number | null = labelMap[normalized] ?? null;
+
+        // Fuzzy match fallback
+        if (value === null) {
+          let bestDiff = Infinity;
+          for (const [k, v] of Object.entries(labelMap)) {
+            if (k.includes(normalized) || normalized.includes(k)) {
+              const diff = Math.abs(k.length - normalized.length);
+              if (diff < bestDiff) { bestDiff = diff; value = v; }
+            }
+          }
+        }
+
+        if (value === null) {
+          errors.push(`No match for "${mapping.sourceLabel}" in ${sheetName}::${targetHeader}`);
+          continue;
+        }
+
+        const transformed = applyTransform(value, mapping.valueTransform);
+        valuesToInsert.push({
+          runId,
+          mappingId: mapping.id,
+          extractedValue: transformed.toFixed(6),
+          confidence: 1.0,
+        });
+      }
+    }
+
+    if (valuesToInsert.length === 0) {
+      throw new Error("Excel extraction matched zero values — check mappings and source file");
+    }
+
+    const inserted = await db.insert(extractedValues).values(valuesToInsert).returning();
+
+    const validationInputs: ValidationInput[] = inserted.map((v) => {
+      const mapping = mappings.find((m) => m.id === v.mappingId)!;
+      return {
+        id: v.id,
+        extractedValue: v.extractedValue!,
+        confidence: v.confidence ?? 1.0,
+        validationSign: mapping.validationSign,
+        sourceLabel: mapping.sourceLabel,
+      };
+    });
+
+    const validationResults = runValidation(validationInputs);
+    for (const vr of validationResults) {
+      await db
+        .update(extractedValues)
+        .set({ validationStatus: vr.status, validationMessage: vr.message })
+        .where(eq(extractedValues.id, vr.id));
+    }
+
+    await db
+      .update(extractionRuns)
+      .set({ status: "extracted", extractedAt: new Date() })
+      .where(eq(extractionRuns.id, runId));
+
+    return {
+      extracted: inserted.length,
+      validated: validationResults.filter((r) => r.status === "pass").length,
+      errors,
+    };
+  } finally {
+    await unlink(tmpPath).catch(() => {});
+  }
+}
+
+// ── Excel source extraction (ExcelJS) ─────────────────────────────────────
 
 /**
  * Extract financial data from a source Excel spreadsheet.
@@ -241,6 +374,13 @@ async function extractFromExcel(
   companyId: number,
   errors: string[]
 ): Promise<{ extracted: number; validated: number; errors: string[] }> {
+  // Files >2MB crash ExcelJS with OOM — use Python (openpyxl) for large files.
+  // ExcelJS inflates xlsx into in-memory DOM; complex workbooks blow up the heap.
+  const MAX_EXCELJS_SIZE = 2 * 1024 * 1024; // 2MB
+  if (fileBuffer.length > MAX_EXCELJS_SIZE || process.env.VERCEL) {
+    return extractFromExcelPython(fileBuffer, mappings, runId, errors);
+  }
+
   const ExcelJS = await import("exceljs");
   const wb = new ExcelJS.default.Workbook();
   await wb.xlsx.read(
@@ -261,7 +401,7 @@ async function extractFromExcel(
     // Get or build cache for this sheet+column combo
     const cacheKey = `${sheetName}::${targetHeader}`;
     if (!sheetCache.has(cacheKey)) {
-      const ws = wb.getWorksheet(sheetName);
+      const ws = wb!.getWorksheet(sheetName);
       if (!ws) {
         errors.push(`Sheet "${sheetName}" not found in source Excel`);
         sheetCache.set(cacheKey, new Map());
