@@ -3,15 +3,17 @@
  * pdfplumber (PDF) or exceljs (Excel), applies field mappings + transforms,
  * validates, and saves extracted values to the database.
  *
- * Supports two PDF formats:
+ * Supports three PDF extraction modes:
  *   - BIVA-style (Mexican filings with section codes like [310000])
  *   - IFRS-style (Chilean/generic filings with text-pattern matching)
+ *   - Vision-based (image-heavy PDFs → render pages → Claude vision OCR)
  */
 import { getDb } from "@/db";
 import { fieldMappings, extractionRuns, extractedValues } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { extractPdfTables, type PdfSection } from "@/lib/pdf/extract";
 import { extractPdfText, type ParsedLine } from "@/lib/pdf/extract-text";
+import { extractPdfVision } from "@/lib/pdf/extract-vision";
 import { runValidation, type ValidationInput } from "@/lib/validation/engine";
 
 // ── Value transforms ────────────────────────────────────────────────────────
@@ -36,48 +38,85 @@ function applyTransform(
   }
 }
 
+// ── BIVA column detection ──────────────────────────────────────────────────
+
+/**
+ * BIVA PDFs have standardized column headers. We detect the correct column
+ * automatically from the headers rather than relying on hardcoded indices.
+ *
+ * Preference order (first match wins):
+ *   1. "Trimestre.*Actual"  — quarterly current period (Income Statement, Cash Flow)
+ *   2. "Cierre Trimestre.*Actual" — current quarter close (Balance Sheet)
+ *   3. "Acumulado.*Actual"  — year-to-date current (fallback for IS/CF)
+ *   4. Column 0             — absolute fallback (first data column = current period)
+ *
+ * This works for any BIVA company without per-mapping configuration.
+ */
+const BIVA_PREFERRED_HEADERS = [
+  /trimestre\s*(a[ñn]o\s*)?actual/i,  // quarterly current
+  /cierre\s*trimestre\s*actual/i,       // balance sheet current close
+  /acumulado\s*(a[ñn]o\s*)?actual/i,   // YTD current
+];
+
+function detectBivaColIndex(headers: string[]): number {
+  // Skip first header (always "Concepto")
+  for (const pattern of BIVA_PREFERRED_HEADERS) {
+    for (let i = 1; i < headers.length; i++) {
+      if (pattern.test(headers[i])) {
+        return i - 1; // -1 because row.values doesn't include the label column
+      }
+    }
+  }
+  return 0; // fallback: first data column
+}
+
 // ── Label matching (BIVA sections) ──────────────────────────────────────────
 
 /**
  * Fuzzy-match a mapping's sourceLabel against PDF table row labels.
- * Returns the best match's raw value, or null if no match.
+ *
+ * Column selection (in priority order):
+ *   1. Explicit colOverride (for vision extraction where column is known)
+ *   2. Auto-detect from BIVA table headers (for BIVA filings)
+ *   3. Fallback to column 0 (first data column)
  */
 function findValueInSection(
   sections: PdfSection[],
   sectionCode: string,
-  sourceLabel: string
+  sourceLabel: string,
+  colOverride: number | null = null
 ): { value: number; confidence: number } | null {
   const section = sections.find((s) => s.code === sectionCode);
   if (!section) return null;
 
   const normalizedLabel = sourceLabel.toLowerCase().trim();
 
-  // Collect all candidate matches with scores, then pick the best one.
-  // This avoids returning the first "contains" match when a better one exists later.
   let bestMatch: { value: number; confidence: number; lengthDiff: number } | null = null;
 
   for (const table of section.tables) {
+    // Use explicit column if provided, otherwise auto-detect from headers
+    const colIndex = colOverride ?? detectBivaColIndex(table.headers);
+
     for (const row of table.rows) {
       const rowLabel = row.label.toLowerCase().trim();
-      const lastValue = [...row.values].reverse().find((v) => v !== null);
-      if (lastValue === null || lastValue === undefined) continue;
+      const targetValue =
+        colIndex >= 0 && colIndex < row.values.length
+          ? row.values[colIndex]
+          : row.values.find((v) => v !== null) ?? null;
+      if (targetValue === null || targetValue === undefined) continue;
 
       let confidence = 0;
       const lengthDiff = Math.abs(rowLabel.length - normalizedLabel.length);
 
       if (rowLabel === normalizedLabel) {
-        // Exact match — return immediately
-        return { value: lastValue, confidence: 1.0 };
+        return { value: targetValue, confidence: 1.0 };
       } else if (rowLabel.includes(normalizedLabel) || normalizedLabel.includes(rowLabel)) {
-        // Contains match — prefer the one with the smallest length difference
-        // (i.e., "Total pasivos" is a better match for "Total de pasivos" than
-        // "Total de pasivos circulantes distintos de los pasivos atribuibles...")
         confidence = 0.85;
       }
 
       if (confidence > 0) {
         if (!bestMatch || lengthDiff < bestMatch.lengthDiff) {
-          bestMatch = { value: lastValue, confidence, lengthDiff };
+          bestMatch = { value: targetValue, confidence, lengthDiff };
         }
       }
     }
@@ -237,22 +276,38 @@ export async function runExtractionPipeline(runId: number): Promise<{
   }
 
   // Determine extraction mode from mappings
+  // Modes: "ifrs_text", "vision:<pages>", or BIVA section codes like "[310000]"
   const sectionCodes = [
     ...new Set(mappings.map((m) => m.sourceSection).filter(Boolean)),
   ] as string[];
   const isIfrsText = sectionCodes.includes("ifrs_text");
+  const visionSections = sectionCodes.filter((c) => c.startsWith("vision:"));
+  const isVision = visionSections.length > 0;
+  const bivaCodes = sectionCodes.filter((c) => c.startsWith("[") && !c.startsWith("vision"));
 
   // Extract data using appropriate method
   let sections: PdfSection[] = [];
   let textLines: ParsedLine[] = [];
 
-  if (isIfrsText) {
+  if (isVision) {
+    // Vision mode: render specified pages as images, send to Claude for OCR
+    // sourceSection format: "vision:33,34" → pages 33 and 34
+    for (const visionCode of visionSections) {
+      const pagesPart = visionCode.replace("vision:", "");
+      const pages = pagesPart.split(",").map((p) => parseInt(p.trim(), 10));
+      const section = await extractPdfVision(fileBuffer, pages, visionCode);
+      sections.push(section);
+    }
+    if (sections.every((s) => s.tables[0]?.rows.length === 0)) {
+      throw new Error("Vision extraction returned no table data");
+    }
+  } else if (isIfrsText) {
     textLines = await extractPdfText(fileBuffer);
     if (textLines.length === 0) {
       throw new Error("IFRS PDF text extraction returned no data lines");
     }
   } else {
-    sections = await extractPdfTables(fileBuffer, sectionCodes);
+    sections = await extractPdfTables(fileBuffer, bivaCodes.length > 0 ? bivaCodes : sectionCodes);
     if (sections.length === 0) {
       throw new Error("PDF extraction returned no sections");
     }
@@ -290,9 +345,14 @@ export async function runExtractionPipeline(runId: number): Promise<{
       : mapping.sourceCol === "cf" ? [8, 12]  // cash flow (usually pages 9-10)
       : undefined;
 
+    // For vision/non-IFRS sections, sourceCol may be a numeric column index
+    const visionColOverride = !isIfrsText && mapping.sourceCol
+      ? (parseInt(mapping.sourceCol, 10) || null)
+      : null;
+
     const match = isIfrsText
       ? findValueInText(textLines, mapping.sourceLabel, colIndex, pageRange)
-      : findValueInSection(sections, mapping.sourceSection, mapping.sourceLabel);
+      : findValueInSection(sections, mapping.sourceSection, mapping.sourceLabel, visionColOverride);
 
     if (!match) {
       errors.push(
