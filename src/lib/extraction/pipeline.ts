@@ -224,6 +224,193 @@ function findValueInText(
   return null;
 }
 
+// ── Excel source extraction ────────────────────────────────────────────────
+
+/**
+ * Extract financial data from a source Excel spreadsheet.
+ *
+ * Mapping convention for Excel sources:
+ *   - sourceSection: sheet name in the source workbook (e.g., "Income Statement")
+ *   - sourceLabel: row label to fuzzy-match (checks columns B and C for EN/PT labels)
+ *   - sourceCol: column header to find (e.g., "4Q25") — scanned in row 6
+ */
+async function extractFromExcel(
+  fileBuffer: Buffer,
+  mappings: typeof fieldMappings.$inferSelect[],
+  runId: number,
+  companyId: number,
+  errors: string[]
+): Promise<{ extracted: number; validated: number; errors: string[] }> {
+  const ExcelJS = await import("exceljs");
+  const wb = new ExcelJS.default.Workbook();
+  await wb.xlsx.read(
+    new (await import("stream")).PassThrough().end(fileBuffer) as never
+  );
+
+  const db = getDb();
+
+  // Build a cache of sheet data: { sheetName → { label → value } }
+  const sheetCache = new Map<string, Map<string, number>>();
+
+  for (const mapping of mappings) {
+    if (!mapping.sourceSection || !mapping.sourceCol) continue;
+
+    const sheetName = mapping.sourceSection;
+    const targetHeader = mapping.sourceCol; // e.g., "4Q25"
+
+    // Get or build cache for this sheet+column combo
+    const cacheKey = `${sheetName}::${targetHeader}`;
+    if (!sheetCache.has(cacheKey)) {
+      const ws = wb.getWorksheet(sheetName);
+      if (!ws) {
+        errors.push(`Sheet "${sheetName}" not found in source Excel`);
+        sheetCache.set(cacheKey, new Map());
+        continue;
+      }
+
+      // Find the column with the target header.
+      // Supports string match (e.g., "4Q25") and date match (e.g., "4Q25" → Dec 2025).
+      // Scans row 6 first (period labels), falls back to row 4 if row 6 has dates.
+      let dataCol: number | null = null;
+      for (const scanRow of [6, 4]) {
+        for (let c = 1; c <= ws.columnCount; c++) {
+          const v = ws.getCell(scanRow, c).value;
+          const display = v && typeof v === "object" && "result" in v ? v.result : v;
+          if (display == null) continue;
+
+          // String match
+          if (String(display).trim() === targetHeader) {
+            dataCol = c;
+            break;
+          }
+
+          // Date match: convert "4Q25" → Q4 2025 → check if date is in Oct-Dec 2025
+          if (display instanceof Date && /^\d[Qq]\d{2}$/.test(targetHeader)) {
+            const q = parseInt(targetHeader[0], 10);
+            const yr = 2000 + parseInt(targetHeader.slice(2), 10);
+            const month = display.getMonth(); // 0-indexed
+            const year = display.getFullYear();
+            const quarterOfDate = Math.floor(month / 3) + 1;
+            if (year === yr && quarterOfDate === q) {
+              dataCol = c;
+              break;
+            }
+          }
+        }
+        if (dataCol) break;
+      }
+
+      if (!dataCol) {
+        errors.push(`Column "${targetHeader}" not found in sheet "${sheetName}"`);
+        sheetCache.set(cacheKey, new Map());
+        continue;
+      }
+
+      // Build label→value map (check columns B=2 and C=3 for EN/PT labels)
+      const labelMap = new Map<string, number>();
+      for (let r = 7; r <= ws.rowCount; r++) {
+        const labelB = ws.getCell(r, 2).value;
+        const labelC = ws.getCell(r, 3).value;
+        const raw = ws.getCell(r, dataCol).value;
+        const val = raw && typeof raw === "object" && "result" in raw ? raw.result : raw;
+        if (val == null || typeof val !== "number") continue;
+
+        // Index by both EN (col B) and PT (col C) labels, lowercased
+        if (labelB) labelMap.set(String(labelB).toLowerCase().trim(), val);
+        if (labelC) labelMap.set(String(labelC).toLowerCase().trim(), val);
+      }
+      sheetCache.set(cacheKey, labelMap);
+    }
+  }
+
+  // Match mappings to cached data
+  const valuesToInsert: {
+    runId: number;
+    mappingId: number;
+    extractedValue: string;
+    confidence: number;
+  }[] = [];
+
+  for (const mapping of mappings) {
+    if (!mapping.sourceSection || !mapping.sourceCol) {
+      errors.push(`Mapping ${mapping.id} (${mapping.sourceLabel}) missing sourceSection or sourceCol`);
+      continue;
+    }
+
+    const cacheKey = `${mapping.sourceSection}::${mapping.sourceCol}`;
+    const labelMap = sheetCache.get(cacheKey);
+    if (!labelMap || labelMap.size === 0) continue;
+
+    const normalized = mapping.sourceLabel.toLowerCase().trim();
+
+    // Try exact match first, then contains match
+    let value: number | null = labelMap.get(normalized) ?? null;
+    if (value === null) {
+      // Contains match — find the entry with the smallest length difference
+      let bestDiff = Infinity;
+      for (const [key, val] of labelMap) {
+        if (key.includes(normalized) || normalized.includes(key)) {
+          const diff = Math.abs(key.length - normalized.length);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            value = val;
+          }
+        }
+      }
+    }
+
+    if (value === null) {
+      errors.push(`No match for "${mapping.sourceLabel}" in ${mapping.sourceSection}::${mapping.sourceCol}`);
+      continue;
+    }
+
+    const transformed = applyTransform(value, mapping.valueTransform);
+    valuesToInsert.push({
+      runId,
+      mappingId: mapping.id,
+      extractedValue: transformed.toFixed(6),
+      confidence: 1.0, // Excel values are exact
+    });
+  }
+
+  if (valuesToInsert.length === 0) {
+    throw new Error("Excel extraction matched zero values — check mappings and source file");
+  }
+
+  // Save + validate (same as PDF path)
+  const inserted = await db.insert(extractedValues).values(valuesToInsert).returning();
+
+  const validationInputs: ValidationInput[] = inserted.map((v) => {
+    const mapping = mappings.find((m) => m.id === v.mappingId)!;
+    return {
+      id: v.id,
+      extractedValue: v.extractedValue!,
+      confidence: v.confidence ?? 1.0,
+      validationSign: mapping.validationSign,
+      sourceLabel: mapping.sourceLabel,
+    };
+  });
+
+  const validationResults = runValidation(validationInputs);
+  for (const result of validationResults) {
+    await db
+      .update(extractedValues)
+      .set({ validationStatus: result.status, validationMessage: result.message })
+      .where(eq(extractedValues.id, result.id));
+  }
+
+  await db
+    .update(extractionRuns)
+    .set({ status: "extracted", extractedAt: new Date() })
+    .where(eq(extractionRuns.id, runId));
+
+  return {
+    extracted: inserted.length,
+    validated: validationResults.filter((r) => r.status === "pass").length,
+    errors,
+  };
+}
+
 // ── Pipeline ────────────────────────────────────────────────────────────────
 
 export async function runExtractionPipeline(runId: number): Promise<{
@@ -272,7 +459,8 @@ export async function runExtractionPipeline(runId: number): Promise<{
     fileBuffer[0] === 0x25; // %PDF magic byte
 
   if (!isPdf) {
-    throw new Error("Excel source extraction not yet implemented — use PDF source files");
+    // Excel source extraction — read values from a source spreadsheet
+    return extractFromExcel(fileBuffer, mappings, runId, run.companyId!, errors);
   }
 
   // Determine extraction mode from mappings
