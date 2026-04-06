@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
+import { MainTabs } from "@/components/main-tabs";
+import { ReconcilePanel } from "@/components/reconcile-panel";
 
 // Placeholder data for v1 (before DB is connected)
 const PLACEHOLDER_COMPANIES = [
@@ -32,44 +33,64 @@ export default async function DashboardPage() {
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-5xl px-6 py-10">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Report Populator</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Quarterly financial report auto-populator
-            </p>
-          </div>
-          {/* Add Company page is a v2 feature — companies are seeded via CLI */}
+        <div className="mb-8">
+          <h1 className="text-2xl font-semibold tracking-tight">Fundamenta</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Herramientas de equity research
+          </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          {companiesData.map((company) => (
-            <Link key={company.id} href={`/companies/${company.id}`}>
-              <Card className="hover:border-primary/40 transition-colors cursor-pointer">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">{company.name}</CardTitle>
-                    <Badge variant="outline" className="uppercase text-xs">
-                      {company.sourceType}
-                    </Badge>
-                  </div>
-                  <p className="font-mono text-sm text-muted-foreground">{company.ticker}</p>
-                </CardHeader>
-                <CardContent>
-                  {company.lastRun ? (
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="text-muted-foreground">Last run:</span>
-                      <span className="font-mono">{/* quarter */}</span>
-                      <StatusBadge status="approved" />
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">No extraction runs yet</p>
-                  )}
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
+        <MainTabs
+          camilaContent={
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Report Populator</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Quarterly financial report auto-populator
+                </p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {companiesData.map((company) => (
+                  <Link key={company.id} href={`/companies/${company.id}`}>
+                    <Card className="hover:border-primary/40 transition-colors cursor-pointer">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-lg">{company.name}</CardTitle>
+                          <Badge variant="outline" className="uppercase text-xs">
+                            {company.sourceType}
+                          </Badge>
+                        </div>
+                        <p className="font-mono text-sm text-muted-foreground">{company.ticker}</p>
+                      </CardHeader>
+                      <CardContent>
+                        {company.lastRun ? (
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-muted-foreground">Last run:</span>
+                            <span className="font-mono">{/* quarter */}</span>
+                            <StatusBadge status="approved" />
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No extraction runs yet</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          }
+          jpContent={
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">Reconciliación Simultáneas</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Compara dos extractos LarrainVial e identifica terminadas, nuevas y persistentes
+                </p>
+              </div>
+              <ReconcilePanel />
+            </div>
+          }
+        />
       </div>
     </div>
   );
