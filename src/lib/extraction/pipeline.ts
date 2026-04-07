@@ -265,19 +265,39 @@ async function extractFromExcelPython(
     for (const [key, groupMappings] of groups) {
       const [sheetName, targetHeader] = key.split("::");
 
-      // Run Python extractor
-      const result = await new Promise<string>((resolve, reject) => {
-        const scriptPath = join(process.cwd(), "src/lib/pdf/extract-excel.py");
-        const proc = spawn("python3", [scriptPath, tmpPath, sheetName, targetHeader, "0,1"]);
-        let stdout = "";
-        let stderr = "";
-        proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-        proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
-        proc.on("close", (code: number | null) => {
-          if (code !== 0) reject(new Error(`Python Excel extraction failed: ${stderr}`));
-          else resolve(stdout.trim());
+      // Run Python extractor (remote API or local subprocess)
+      let result: string;
+      if (process.env.EXTRACTION_API_URL) {
+        const form = new FormData();
+        form.append("file", new Blob([new Uint8Array(fileBuffer)], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }), "input.xlsx");
+        form.append("sheet_name", sheetName);
+        form.append("target_header", targetHeader);
+        form.append("label_cols", "0,1");
+        const res = await fetch(`${process.env.EXTRACTION_API_URL}/extract/excel`, {
+          method: "POST",
+          body: form,
         });
-      });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(`Remote Excel extraction failed: ${err.detail || err.error}`);
+        }
+        result = JSON.stringify(await res.json());
+      } else {
+        result = await new Promise<string>((resolve, reject) => {
+          const scriptPath = join(process.cwd(), "src/lib/pdf/extract-excel.py");
+          const proc = spawn("python3", [scriptPath, tmpPath, sheetName, targetHeader, "0,1"]);
+          let stdout = "";
+          let stderr = "";
+          proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+          proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+          proc.on("close", (code: number | null) => {
+            if (code !== 0) reject(new Error(`Python Excel extraction failed: ${stderr}`));
+            else resolve(stdout.trim());
+          });
+        });
+      }
 
       const parsed = JSON.parse(result) as { error?: string; data?: Record<string, number> };
       if (parsed.error) {

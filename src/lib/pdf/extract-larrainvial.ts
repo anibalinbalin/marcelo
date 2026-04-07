@@ -44,14 +44,34 @@ export interface LarrainVialExtraction {
   totalFinanciamiento: number | null;
 }
 
+const EXTRACTION_API_URL = process.env.EXTRACTION_API_URL;
+
 /**
- * Extract FINANCIAMIENTO and MOVIMIENTOS DE CAJA EN PESOS from a LarrainVial
- * "Informe Provisorio Patrimonial" PDF.
- *
- * Python-only (pdfplumber). No fallback — throws if Python/pdfplumber unavailable.
- * This is an internal tool that runs locally; fail loudly rather than silently corrupt.
+ * Extract via remote API (Vercel / when EXTRACTION_API_URL is set).
  */
-export async function extractLarrainVial(
+async function extractLarrainVialRemote(
+  pdfBuffer: Buffer
+): Promise<LarrainVialExtraction> {
+  const form = new FormData();
+  form.append("file", new Blob([new Uint8Array(pdfBuffer)], { type: "application/pdf" }), "input.pdf");
+
+  const res = await fetch(`${EXTRACTION_API_URL}/extract/larrainvial`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(`Remote LarrainVial extraction failed: ${err.detail || err.error}`);
+  }
+
+  return (await res.json()) as LarrainVialExtraction;
+}
+
+/**
+ * Extract via local Python subprocess.
+ */
+async function extractLarrainVialLocal(
   pdfBuffer: Buffer
 ): Promise<LarrainVialExtraction> {
   const tmpPath = join(tmpdir(), `larrainvial-${randomUUID()}.pdf`);
@@ -96,4 +116,19 @@ export async function extractLarrainVial(
   } finally {
     await unlink(tmpPath).catch(() => {});
   }
+}
+
+/**
+ * Extract FINANCIAMIENTO and MOVIMIENTOS DE CAJA EN PESOS from a LarrainVial
+ * "Informe Provisorio Patrimonial" PDF.
+ *
+ * Uses remote API on Vercel, local Python subprocess otherwise.
+ */
+export async function extractLarrainVial(
+  pdfBuffer: Buffer
+): Promise<LarrainVialExtraction> {
+  if (EXTRACTION_API_URL) {
+    return extractLarrainVialRemote(pdfBuffer);
+  }
+  return extractLarrainVialLocal(pdfBuffer);
 }
