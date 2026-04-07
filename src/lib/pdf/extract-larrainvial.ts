@@ -26,11 +26,21 @@ export interface CashMovement {
   saldo: number | null;    // running balance
 }
 
+export interface TituloSimultanea {
+  fecha: string;       // DD/MM/YYYY
+  referencia: string;  // reference number (links to cash or financing folio)
+  descripcion: string; // "Venta RV (simultanea)" | "Compra tp (simultanea)" | "Liquidacion compra tp"
+  nemo: string;        // ticker symbol
+  precio: number;      // trade price
+  cantidad: number;    // share quantity
+}
+
 export interface LarrainVialExtraction {
   date: string;            // YYYY-MM-DD extracted from PDF (last cash movement date)
   fundName: string | null;
   financiamiento: Simultanea[];
   movCajaPesos: CashMovement[];
+  movTitulosPesos: TituloSimultanea[];
   totalFinanciamiento: number | null;
 }
 

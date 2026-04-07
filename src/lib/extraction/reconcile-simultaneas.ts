@@ -1,6 +1,7 @@
 import type {
   Simultanea,
   CashMovement,
+  TituloSimultanea,
   LarrainVialExtraction,
 } from "@/lib/pdf/extract-larrainvial";
 
@@ -42,58 +43,65 @@ export interface ReconciliationResult {
   };
 }
 
-// Cash movement description patterns (all in lowercase for matching)
-// Early cancellation (precancelación total): "N.credito compra tp" — no ticker info
-const SETTLEMENT_PATTERN = "n.credito compra tp";
-// Maturity on original date (vencimiento): "Liquidacion compra tp [TICKER]" — includes ticker
-const MATURITY_PATTERN = "liquidacion compra tp";
-const CREATION_PATTERN = "factura venta rv (simultanea)";
+// Titulos description patterns
+const VENTA_SIMULTANEA = "venta rv (simultanea)";
+const COMPRA_SIMULTANEA = "compra tp (simultanea)";
+const LIQUIDACION = "liquidacion compra tp";
+
+// Cash movement description patterns
+const CASH_SETTLEMENT_PATTERN = "liquidacion compra tp";
+const CASH_PRECANCELACION_PATTERN = "n.credito compra tp";
+const CASH_CREATION_PATTERN = "factura venta rv (simultanea)";
 
 /**
- * Amount-based matching tolerance in CLP.
- * Settlement amounts are within ~500 CLP of the previous day's Compromiso.
- * Creation amounts (Abono) match Principal exactly or within ~50 CLP.
+ * Find Titulos entries matching a description pattern.
  */
-const AMOUNT_TOLERANCE = 5000;
-
-/**
- * Find the best-matching cash movement for a given target amount.
- * Returns the entry with the smallest absolute difference, if within tolerance.
- */
-function findByAmount(
-  candidates: CashMovement[],
-  targetAmount: number,
-  tolerance: number = AMOUNT_TOLERANCE
-): CashMovement | null {
-  let best: CashMovement | null = null;
-  let bestDiff = Infinity;
-
-  for (const entry of candidates) {
-    const amount = entry.cargo ?? entry.abono;
-    if (amount == null) continue;
-    const diff = Math.abs(amount - targetAmount);
-    if (diff <= tolerance && diff < bestDiff) {
-      bestDiff = diff;
-      best = entry;
-    }
-  }
-
-  return best;
+function filterTitulos(
+  titulos: TituloSimultanea[],
+  pattern: string
+): TituloSimultanea[] {
+  return titulos.filter((t) =>
+    t.descripcion.toLowerCase().includes(pattern)
+  );
 }
 
 /**
- * Reconcile simultáneas between two consecutive daily LarrainVial extracts.
+ * Find the paired "Venta RV (simultanea)" entry for a given "Compra tp (simultanea)" entry.
+ * Pair link: same fecha + same nemo + same cantidad.
+ */
+function findVentaPair(
+  ventas: TituloSimultanea[],
+  compra: TituloSimultanea
+): TituloSimultanea | null {
+  return (
+    ventas.find(
+      (v) =>
+        v.fecha === compra.fecha &&
+        v.nemo === compra.nemo &&
+        v.cantidad === compra.cantidad
+    ) ?? null
+  );
+}
+
+/**
+ * Find a cash movement by its reference number.
+ */
+function findCashByRef(
+  movements: CashMovement[],
+  ref: string
+): CashMovement | null {
+  return movements.find((m) => m.referencia === ref) ?? null;
+}
+
+/**
+ * Reconcile simultaneas between two consecutive daily LarrainVial extracts.
  *
- * Known simultánea lifecycle variants:
- * 1. Creación         → cash: "Factura venta RV (simultanea)" Abono ≈ Principal
- * 2. Precancelación   → cash: "N.credito compra tp" Cargo ≈ Compromiso (no ticker)
- * 3. Vencimiento      → cash: "Liquidacion compra tp [TICKER]" Cargo (ticker embedded)
- * 4. Precancelación parcial → NOT YET SEEN (pending future sample)
+ * Uses the Titulos section as a deterministic join table:
+ * - "Compra tp (simultanea)" ref = financing folio
+ * - Its paired "Venta RV (simultanea)" ref = cash movement referencia (abono)
+ * - "Liquidacion compra tp" ref = cash movement referencia (cargo)
  *
- * Matching strategy:
- * - Terminated: match by ticker for maturities, by amount (±5k CLP) for early cancellations
- * - Created: "Factura venta RV (simultanea)" Abono ≈ Principal (±50k CLP)
- * - Settlement references bear no relation to folios — amount/ticker is the key
+ * No amount-based tolerance matching. Reference chains only.
  */
 export function reconcileSimultaneas(
   extractA: LarrainVialExtraction,
@@ -116,69 +124,126 @@ export function reconcileSimultaneas(
   const createdFolios = [...foliosB.keys()].filter((f) => !foliosA.has(f));
   const persistentFolios = [...foliosA.keys()].filter((f) => foliosB.has(f));
 
-  // Extract simultanea-related cash movements from day B
-  const transitionDate = dateB.split("-").reverse().join("/"); // YYYY-MM-DD -> DD/MM/YYYY
-  const dayBMovements = extractB.movCajaPesos.filter(
-    (m) => m.fecha === transitionDate
-  );
+  // Use Titulos from the report that contains the transition events (day B)
+  const titulosB = extractB.movTitulosPesos ?? [];
+  const ventasB = filterTitulos(titulosB, VENTA_SIMULTANEA);
+  const comprasB = filterTitulos(titulosB, COMPRA_SIMULTANEA);
+  const liquidacionesB = filterTitulos(titulosB, LIQUIDACION);
 
-  // Settlements: early cancellations ("N.credito compra tp") + maturities ("Liquidacion compra tp [TICKER]")
-  const settlements = dayBMovements.filter((m) => {
-    const desc = m.descripcion.toLowerCase();
-    return desc.includes(SETTLEMENT_PATTERN) || desc.includes(MATURITY_PATTERN);
+  // Also check Titulos from day A (the later-emitted report may have more entries)
+  const titulosA = extractA.movTitulosPesos ?? [];
+  const ventasA = filterTitulos(titulosA, VENTA_SIMULTANEA);
+  const comprasA = filterTitulos(titulosA, COMPRA_SIMULTANEA);
+  const liquidacionesA = filterTitulos(titulosA, LIQUIDACION);
+
+  // Merge: use all available Titulos from both reports (dedup by referencia)
+  const allVentas = dedup([...ventasB, ...ventasA]);
+  const allCompras = dedup([...comprasB, ...comprasA]);
+  const allLiquidaciones = dedup([...liquidacionesB, ...liquidacionesA]);
+
+  // Cash movements from both reports (for matching)
+  const allCashB = extractB.movCajaPesos;
+  const allCashA = extractA.movCajaPesos;
+
+  const usedCashRefs = new Set<string>();
+
+  // --- Match created positions via reference chain ---
+  const created: CreatedSimultanea[] = createdFolios.map((folio) => {
+    const simultanea = foliosB.get(folio)!;
+
+    // Step 1: folio = "Compra tp (simultanea)" ref in Titulos
+    const compra = allCompras.find((c) => c.referencia === folio);
+
+    // Step 2: find paired "Venta RV (simultanea)" (same date + ticker + qty)
+    const venta = compra ? findVentaPair(allVentas, compra) : null;
+
+    // Step 3: Venta ref -> cash movement referencia (abono)
+    let cashCreation: CashMovement | null = null;
+    if (venta) {
+      cashCreation =
+        findCashByRef(allCashB, venta.referencia) ??
+        findCashByRef(allCashA, venta.referencia);
+      if (cashCreation) usedCashRefs.add(venta.referencia);
+    }
+
+    const creationAmount = cashCreation?.abono ?? null;
+    const commission =
+      creationAmount != null ? simultanea.principal - creationAmount : 0;
+
+    return { simultanea, cashCreation, commission };
   });
-  const creations = dayBMovements.filter((m) =>
-    m.descripcion.toLowerCase().includes(CREATION_PATTERN)
-  );
 
-  const usedSettlements = new Set<CashMovement>();
-  const usedCreations = new Set<CashMovement>();
-
-  // Match terminated → settlement entries (precancelación or vencimiento)
-  // Maturity entries include the ticker ("Liquidacion compra tp ANDINA-B"),
-  // so prefer ticker match when available, then fall back to amount match.
+  // --- Match terminated positions via reference chain ---
   const terminated: TerminatedSimultanea[] = terminatedFolios.map((folio) => {
     const simultanea = foliosA.get(folio)!;
-    const unusedSettlements = settlements.filter((s) => !usedSettlements.has(s));
 
-    // Try ticker match first (maturity entries embed the nemo)
-    const tickerMatch = unusedSettlements.find((s) => {
-      const desc = s.descripcion.toLowerCase();
-      return (
-        desc.includes(MATURITY_PATTERN) &&
-        desc.includes(simultanea.nemo.toLowerCase())
-      );
-    });
-    const match = tickerMatch ?? findByAmount(unusedSettlements, simultanea.compromiso);
-    if (match) usedSettlements.add(match);
+    // Find "Liquidacion compra tp" in Titulos matching the terminated position's ticker
+    // For liquidations, the folio itself may be the Titulos ref (if it was the original compra)
+    let liquidacion = allLiquidaciones.find((l) => l.referencia === folio);
 
-    const settlementAmount = match?.cargo ?? null;
+    // If not found by folio, match by ticker + quantity
+    if (!liquidacion) {
+      liquidacion = allLiquidaciones.find(
+        (l) =>
+          l.nemo === simultanea.nemo &&
+          l.cantidad === simultanea.cantidad &&
+          !usedCashRefs.has(l.referencia)
+      ) ?? undefined;
+    }
+
+    // Also check for precancelacion: "N.credito compra tp" in cash (no Titulos entry)
+    let cashSettlement: CashMovement | null = null;
+    let type: TerminationType = "precancelacion";
+
+    if (liquidacion) {
+      // Vencimiento: Liquidacion ref -> cash cargo
+      cashSettlement =
+        findCashByRef(allCashB, liquidacion.referencia) ??
+        findCashByRef(allCashA, liquidacion.referencia);
+      if (cashSettlement) usedCashRefs.add(liquidacion.referencia);
+      type = "vencimiento";
+    } else {
+      // Precancelacion: look for "N.credito compra tp" in cash by ticker/amount
+      // This is the one case without a Titulos entry - fall back to description match
+      const precancelaciones = [
+        ...allCashB.filter(
+          (m) =>
+            m.descripcion.toLowerCase().includes(CASH_PRECANCELACION_PATTERN) &&
+            !usedCashRefs.has(m.referencia)
+        ),
+        ...allCashA.filter(
+          (m) =>
+            m.descripcion.toLowerCase().includes(CASH_PRECANCELACION_PATTERN) &&
+            !usedCashRefs.has(m.referencia)
+        ),
+      ];
+      // Match by closest amount to compromiso (precancelaciones don't have ticker in description)
+      if (precancelaciones.length > 0) {
+        let bestMatch: CashMovement | null = null;
+        let bestDiff = Infinity;
+        for (const entry of precancelaciones) {
+          const amount = entry.cargo ?? 0;
+          const diff = Math.abs(amount - simultanea.compromiso);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestMatch = entry;
+          }
+        }
+        if (bestMatch) {
+          cashSettlement = bestMatch;
+          usedCashRefs.add(bestMatch.referencia);
+          type = "precancelacion";
+        }
+      }
+    }
+
+    const settlementAmount = cashSettlement?.cargo ?? null;
     const interestTotal =
       settlementAmount != null
         ? settlementAmount - simultanea.principal
         : 0;
 
-    // Determine termination type: maturity if settled via "Liquidacion compra tp"
-    const isMaturity = match
-      ? match.descripcion.toLowerCase().includes(MATURITY_PATTERN)
-      : false;
-    const type: TerminationType = isMaturity ? "vencimiento" : "precancelacion";
-
-    return { simultanea, cashSettlement: match, interestTotal, type };
-  });
-
-  // Match created → Factura venta RV (simultanea) entries
-  const created: CreatedSimultanea[] = createdFolios.map((folio) => {
-    const simultanea = foliosB.get(folio)!;
-    const unusedCreations = creations.filter((c) => !usedCreations.has(c));
-    const match = findByAmount(unusedCreations, simultanea.principal, 50000);
-    if (match) usedCreations.add(match);
-
-    const creationAmount = match?.abono ?? null;
-    const commission =
-      creationAmount != null ? simultanea.principal - creationAmount : 0;
-
-    return { simultanea, cashCreation: match, commission };
+    return { simultanea, cashSettlement, interestTotal, type };
   });
 
   // Persistent positions: daily interest accrual
@@ -188,11 +253,25 @@ export function reconcileSimultaneas(
     return { dayA, dayB, dailyAccrual: dayB.compromiso - dayA.compromiso };
   });
 
-  // Unmatched simultanea-related entries on transition date
-  const unmatched = [
-    ...settlements.filter((s) => !usedSettlements.has(s)),
-    ...creations.filter((c) => !usedCreations.has(c)),
+  // Unmatched: simultanea-related cash entries not joined via reference chain
+  const simultaneaPatterns = [
+    CASH_SETTLEMENT_PATTERN,
+    CASH_PRECANCELACION_PATTERN,
+    CASH_CREATION_PATTERN,
   ];
+  const allSimultaneaCash = [
+    ...allCashB.filter((m) => {
+      const desc = m.descripcion.toLowerCase();
+      return simultaneaPatterns.some((p) => desc.includes(p));
+    }),
+    ...allCashA.filter((m) => {
+      const desc = m.descripcion.toLowerCase();
+      return simultaneaPatterns.some((p) => desc.includes(p));
+    }),
+  ];
+  const unmatched = dedup(
+    allSimultaneaCash.filter((m) => !usedCashRefs.has(m.referencia))
+  );
 
   // Summary
   const totalInterestPaid = terminated.reduce(
@@ -222,4 +301,16 @@ export function reconcileSimultaneas(
       simultaneasPersistent: persistent.length,
     },
   };
+}
+
+/**
+ * Deduplicate entries by referencia field.
+ */
+function dedup<T extends { referencia: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.referencia)) return false;
+    seen.add(item.referencia);
+    return true;
+  });
 }

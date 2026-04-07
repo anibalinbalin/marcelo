@@ -233,10 +233,13 @@ def extract_larrainvial(pdf_path):
 
         financiamiento = []
         mov_caja = []
+        mov_titulos = []
 
         in_fin = False
         in_caja = False
         done_caja = False
+        in_titulos = False
+        done_titulos = False
         total_fin = None
         current_saldo = None
 
@@ -257,6 +260,15 @@ def extract_larrainvial(pdf_path):
             ]):
                 done_caja = True
                 in_caja = False
+            if 'MOVIMIENTOS DE TITULOS EN PESOS' in text and not done_titulos:
+                in_titulos = True
+            if in_titulos and any(h in text for h in [
+                'FORWARD',
+                'DISTRIBUCION DE CUSTODIA',
+                'GARANTIAS',
+            ]):
+                done_titulos = True
+                in_titulos = False
 
             for line in lines:
                 line = line.strip()
@@ -297,6 +309,57 @@ def extract_larrainvial(pdf_path):
                         if mov['fecha']:
                             last_date_seen = mov['fecha']
 
+                elif in_titulos and not done_titulos:
+                    # Skip header/footer lines
+                    if any(h in line for h in ['Fecha', 'MOVIMIENTOS', 'PATRIMONIO', 'R.U.T.', 'Periodo', 'Cuenta', 'www.', 'Pagina', 'Valores', 'Referencia', 'Descripcion']):
+                        continue
+                    # Only extract simultanea-related entries
+                    line_lower = line.lower()
+                    is_simultanea = any(k in line_lower for k in [
+                        'simultanea',
+                        'liquidacion compra tp',
+                    ])
+                    if not is_simultanea:
+                        continue
+                    # Parse: DD/MM/YYYY  Ref  Description  Nemo  Precio  Cantidad
+                    date_match = re.match(r'^(\d{2}/\d{2}/\d{4})\s+', line.strip())
+                    if not date_match:
+                        continue
+                    fecha = date_match.group(1)
+                    rest = line.strip()[date_match.end():]
+                    # Split reference from description
+                    ref_match = re.match(r'^(\d+)\s+(.+)', rest)
+                    if not ref_match:
+                        continue
+                    referencia = ref_match.group(1)
+                    desc_and_fields = ref_match.group(2).strip()
+                    # Extract trailing numbers (precio, cantidad) from end
+                    parts = desc_and_fields.split()
+                    trailing_nums = []
+                    i = len(parts) - 1
+                    while i >= 0:
+                        if re.match(r'^-?[\d.]+(?:,\d+)?$', parts[i]):
+                            trailing_nums.insert(0, parts[i])
+                            i -= 1
+                        else:
+                            break
+                    desc_end = len(parts) - len(trailing_nums)
+                    # Description may include nemo at the end (e.g., "Liquidacion compra tp  ANDINA-B")
+                    desc_parts = parts[:desc_end]
+                    # Last token of description is the nemo/ticker
+                    nemo = desc_parts[-1] if desc_parts else ''
+                    descripcion = ' '.join(desc_parts[:-1]) if len(desc_parts) > 1 else ''
+                    precio = parse_chilean_number(trailing_nums[0]) if len(trailing_nums) >= 1 else None
+                    cantidad = parse_chilean_number(trailing_nums[1]) if len(trailing_nums) >= 2 else None
+                    mov_titulos.append({
+                        'fecha': fecha,
+                        'referencia': referencia,
+                        'descripcion': descripcion,
+                        'nemo': nemo,
+                        'precio': precio,
+                        'cantidad': cantidad,
+                    })
+
         # Use last cash movement date as statement date (more reliable than header period)
         if last_date_seen:
             parts = last_date_seen.split('/')
@@ -308,6 +371,7 @@ def extract_larrainvial(pdf_path):
         'fundName': fund_name,
         'financiamiento': financiamiento,
         'movCajaPesos': mov_caja,
+        'movTitulosPesos': mov_titulos,
         'totalFinanciamiento': total_fin,
     }
 
