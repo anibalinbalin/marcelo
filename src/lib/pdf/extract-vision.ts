@@ -31,9 +31,16 @@ Return ONLY valid JSON, no markdown fences, no commentary.`;
 /**
  * Detect if a PDF page is image-heavy (tables as images, not extractable text).
  * Returns true if the page has large images and very few extractable words.
+ *
+ * On Vercel (no Python), defaults to true for known vision-mode companies.
  */
 export async function isImageHeavyPdf(pdfBuffer: Buffer, samplePages: number[] = [0]): Promise<boolean> {
-  // Use pdfplumber to check word count vs image count on sample pages
+  // On Vercel, no pdfplumber available — the pipeline already knows which companies
+  // use vision mode via sourceSection prefix "vision:", so just return true.
+  if (process.env.VERCEL || process.env.EXTRACTION_API_URL) {
+    return true;
+  }
+
   const tmpPath = join(tmpdir(), `vision-check-${randomUUID()}.pdf`);
   await writeFile(tmpPath, pdfBuffer);
 
@@ -64,7 +71,6 @@ print(json.dumps(results))
     });
 
     const checks: { page: number; words: number; large_images: number }[] = JSON.parse(result);
-    // Image-heavy: pages with large images and <100 words of extractable text
     return checks.some(c => c.large_images > 0 && c.words < 100);
   } finally {
     await unlink(tmpPath).catch(() => {});
@@ -72,10 +78,40 @@ print(json.dumps(results))
 }
 
 /**
- * Render specific PDF pages as PNG images using pdftoppm (poppler).
- * Returns a map of page number → PNG buffer.
+ * Render specific PDF pages as PNG images.
+ * Uses remote API when EXTRACTION_API_URL is set, local pdftoppm otherwise.
  */
 async function renderPages(pdfBuffer: Buffer, pages: number[]): Promise<Map<number, Buffer>> {
+  if (process.env.EXTRACTION_API_URL) {
+    return renderPagesRemote(pdfBuffer, pages);
+  }
+  return renderPagesLocal(pdfBuffer, pages);
+}
+
+async function renderPagesRemote(pdfBuffer: Buffer, pages: number[]): Promise<Map<number, Buffer>> {
+  const form = new FormData();
+  form.append("file", new Blob([new Uint8Array(pdfBuffer)], { type: "application/pdf" }), "input.pdf");
+  form.append("pages", pages.join(","));
+
+  const res = await fetch(`${process.env.EXTRACTION_API_URL}/extract/render-pages`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(`Remote page rendering failed: ${err.detail || err.error}`);
+  }
+
+  const data = (await res.json()) as { pages: Record<string, string> };
+  const results = new Map<number, Buffer>();
+  for (const [pageNum, b64] of Object.entries(data.pages)) {
+    results.set(Number(pageNum), Buffer.from(b64, "base64"));
+  }
+  return results;
+}
+
+async function renderPagesLocal(pdfBuffer: Buffer, pages: number[]): Promise<Map<number, Buffer>> {
   const id = randomUUID();
   const tmpPdf = join(tmpdir(), `vision-render-${id}.pdf`);
   const tmpPrefix = join(tmpdir(), `vision-img-${id}`);
@@ -99,7 +135,6 @@ async function renderPages(pdfBuffer: Buffer, pages: number[]): Promise<Map<numb
         proc.on("error", (err) => reject(err));
       });
 
-      // pdftoppm creates files like prefix-01.png, prefix-02.png etc.
       const dir = tmpdir();
       const files = await readdir(dir);
       const pageStr = String(pageNum).padStart(2, "0");
@@ -114,7 +149,6 @@ async function renderPages(pdfBuffer: Buffer, pages: number[]): Promise<Map<numb
     }
   } finally {
     await unlink(tmpPdf).catch(() => {});
-    // Clean up any remaining image files
     const dir = tmpdir();
     const files = await readdir(dir);
     for (const f of files) {
