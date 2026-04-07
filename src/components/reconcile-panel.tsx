@@ -70,7 +70,7 @@ export function ReconcilePanel() {
                 onClick={() => refA.current?.click()}
               >
                 <p className="text-sm">
-                  {fileA ? fileA.name : "Haz clic o arrastra un PDF"}
+                  {fileA ? fileA.name : "Click or drag a PDF"}
                 </p>
               </div>
               <input
@@ -88,7 +88,7 @@ export function ReconcilePanel() {
                 onClick={() => refB.current?.click()}
               >
                 <p className="text-sm">
-                  {fileB ? fileB.name : "Haz clic o arrastra un PDF"}
+                  {fileB ? fileB.name : "Click or drag a PDF"}
                 </p>
               </div>
               <input
