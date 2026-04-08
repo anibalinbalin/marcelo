@@ -127,7 +127,7 @@ export function ReconcilePanel() {
                   <Badge variant="destructive">
                     {result.summary.simultaneasTerminated} terminadas
                   </Badge>
-                  <Badge className="bg-green-600 hover:bg-green-700">
+                  <Badge className="bg-success-solid hover:bg-success-solid/85 text-white">
                     {result.summary.simultaneasCreated} nuevas
                   </Badge>
                   <Badge variant="outline">
@@ -140,19 +140,19 @@ export function ReconcilePanel() {
               <div className="grid grid-cols-3 gap-4 text-sm">
                 <div>
                   <p className="text-muted-foreground text-xs mb-1">Interés pagado</p>
-                  <p className="font-mono font-semibold text-amber-500">
+                  <p className="font-mono font-semibold text-warning tabular-nums">
                     {formatCLPShort(result.summary.totalInterestPaid)}
                   </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs mb-1">Comisión pagada</p>
-                  <p className="font-mono font-semibold">
+                  <p className="font-mono font-semibold tabular-nums">
                     {formatCLPShort(result.summary.totalCommissionPaid)}
                   </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs mb-1">Δ Financiamiento</p>
-                  <p className={`font-mono font-semibold ${result.summary.netFinancingChange < 0 ? "text-destructive" : "text-green-500"}`}>
+                  <p className={`font-mono font-semibold tabular-nums ${result.summary.netFinancingChange < 0 ? "text-destructive" : "text-success"}`}>
                     {formatCLPShort(result.summary.netFinancingChange)}
                   </p>
                 </div>
@@ -188,7 +188,7 @@ export function ReconcilePanel() {
                       </div>
                       <div className="text-right">
                         <p className="font-mono text-xs text-muted-foreground">Compromiso día A</p>
-                        <p className="font-mono font-semibold">{formatCLPShort(t.simultanea.compromiso)}</p>
+                        <p className="font-mono font-semibold tabular-nums">{formatCLPShort(t.simultanea.compromiso)}</p>
                       </div>
                     </div>
                     {t.cashSettlement && (
@@ -204,14 +204,14 @@ export function ReconcilePanel() {
                         </div>
                         <div className="flex justify-between text-xs mt-1">
                           <span className="text-muted-foreground">Interés total</span>
-                          <span className={`font-mono font-semibold ${t.interestTotal >= 0 ? "text-amber-500" : "text-destructive"}`}>
+                          <span className={`font-mono font-semibold ${t.interestTotal >= 0 ? "text-warning" : "text-destructive"}`}>
                             {formatCLPShort(t.interestTotal)}
                           </span>
                         </div>
                       </>
                     )}
                     {!t.cashSettlement && (
-                      <p className="text-xs text-amber-500 mt-2">⚠ Sin match en movimientos de caja</p>
+                      <p className="text-xs text-warning mt-2">⚠ Sin match en movimientos de caja</p>
                     )}
                   </div>
                 ))}
@@ -223,13 +223,13 @@ export function ReconcilePanel() {
           {result.created.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-base text-green-600">
+                <CardTitle className="text-base text-success">
                   Nuevas ({result.created.length})
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 {result.created.map((c) => (
-                  <div key={c.simultanea.folio} className="rounded-md border border-green-600/20 bg-green-600/5 p-3 text-sm">
+                  <div key={c.simultanea.folio} className="rounded-md border border-success/20 bg-success/5 p-3 text-sm">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <div className="flex items-center gap-2">
@@ -244,7 +244,7 @@ export function ReconcilePanel() {
                       </div>
                       <div className="text-right">
                         <p className="font-mono text-xs text-muted-foreground">Principal</p>
-                        <p className="font-mono font-semibold">{formatCLPShort(c.simultanea.principal)}</p>
+                        <p className="font-mono font-semibold tabular-nums">{formatCLPShort(c.simultanea.principal)}</p>
                       </div>
                     </div>
                     {c.cashCreation && (
@@ -267,7 +267,7 @@ export function ReconcilePanel() {
                       </>
                     )}
                     {!c.cashCreation && (
-                      <p className="text-xs text-amber-500 mt-2">⚠ Sin match en movimientos de caja</p>
+                      <p className="text-xs text-warning mt-2">⚠ Sin match en movimientos de caja</p>
                     )}
                   </div>
                 ))}
@@ -296,15 +296,15 @@ export function ReconcilePanel() {
                       <div className="flex items-center gap-6 text-xs">
                         <div className="text-right">
                           <p className="text-muted-foreground">Compromiso A</p>
-                          <p className="font-mono">{formatCLPShort(p.dayA.compromiso)}</p>
+                          <p className="font-mono tabular-nums">{formatCLPShort(p.dayA.compromiso)}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-muted-foreground">Compromiso B</p>
-                          <p className="font-mono">{formatCLPShort(p.dayB.compromiso)}</p>
+                          <p className="font-mono tabular-nums">{formatCLPShort(p.dayB.compromiso)}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-muted-foreground">Δ Accrual</p>
-                          <p className="font-mono text-amber-500">
+                          <p className="font-mono tabular-nums text-warning">
                             +{formatCLPShort(p.dailyAccrual)}
                           </p>
                         </div>
@@ -320,13 +320,13 @@ export function ReconcilePanel() {
           {result.unmatched.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-base text-amber-500">
+                <CardTitle className="text-base text-warning">
                   Sin match ({result.unmatched.length})
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 {result.unmatched.map((m, i) => (
-                  <div key={i} className="flex justify-between text-xs font-mono border rounded px-3 py-2 bg-amber-500/5">
+                  <div key={i} className="flex justify-between text-xs font-mono border rounded px-3 py-2 bg-warning/5">
                     <span>{m.fecha} ref {m.referencia} — {m.descripcion}</span>
                     <span>
                       {m.cargo != null ? `Cargo ${formatCLPShort(m.cargo)}` : `Abono ${formatCLPShort(m.abono ?? 0)}`}

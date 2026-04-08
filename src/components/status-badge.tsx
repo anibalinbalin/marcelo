@@ -2,10 +2,10 @@ import { Badge } from "@/components/ui/badge";
 
 const STATUS_CONFIG: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; label: string; className?: string }> = {
   pending: { variant: "secondary", label: "Pending" },
-  extracted: { variant: "outline", label: "Extracted", className: "text-yellow-500 border-yellow-500/30" },
-  validated: { variant: "outline", label: "Validated", className: "text-blue-400 border-blue-400/30" },
-  approved: { variant: "default", label: "Approved", className: "bg-emerald-600 text-white" },
-  written: { variant: "default", label: "Written", className: "bg-emerald-700 text-white" },
+  extracted: { variant: "outline", label: "Extracted", className: "text-warning border-warning/30" },
+  validated: { variant: "outline", label: "Validated", className: "text-info border-info/30" },
+  approved: { variant: "default", label: "Approved", className: "bg-success-solid text-white" },
+  written: { variant: "default", label: "Written", className: "bg-success-solid/85 text-white" },
   error: { variant: "destructive", label: "Error" },
   cancelled: { variant: "secondary", label: "Cancelled", className: "line-through opacity-60" },
 };

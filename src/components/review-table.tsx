@@ -35,15 +35,15 @@ interface ReviewTableProps {
 function ConfidenceDot({ confidence }: { confidence: number }) {
   const color =
     confidence >= 0.8
-      ? "bg-emerald-500"
+      ? "bg-success"
       : confidence >= 0.5
-        ? "bg-amber-500"
-        : "bg-red-500";
+        ? "bg-warning"
+        : "bg-destructive";
 
   return (
     <span className="flex items-center gap-1.5">
       <span className={cn("inline-block size-2 rounded-full", color)} />
-      <span className="font-[family-name:var(--font-geist-mono)] text-xs text-muted-foreground">
+      <span className="font-[family-name:var(--font-geist-mono)] text-xs text-muted-foreground tabular-nums">
         {(confidence * 100).toFixed(0)}%
       </span>
     </span>
@@ -56,19 +56,19 @@ function StatusBadge({ status }: { status: string | null }) {
   switch (status) {
     case "pass":
       return (
-        <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/25">
+        <Badge className="bg-success/15 text-success border-success/25">
           pass
         </Badge>
       );
     case "warning":
       return (
-        <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/25">
+        <Badge className="bg-warning/15 text-warning border-warning/25">
           warning
         </Badge>
       );
     case "fail":
       return (
-        <Badge className="bg-red-500/15 text-red-400 border-red-500/25">
+        <Badge className="bg-destructive/15 text-destructive border-destructive/25">
           fail
         </Badge>
       );
@@ -118,7 +118,7 @@ function OverrideCell({
   return (
     <button
       onClick={() => setIsEditing(true)}
-      className="min-w-[80px] rounded px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-zinc-800 hover:text-foreground"
+      className="min-h-[40px] min-w-[80px] rounded px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-zinc-800 hover:text-foreground"
     >
       {currentOverride || "click to override"}
     </button>

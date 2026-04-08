@@ -38,20 +38,20 @@ function StatusBadge({ status }: { status: string }) {
   switch (status) {
     case "pending":
       return (
-        <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/25">
+        <Badge className="bg-info/15 text-info border-info/25">
           Pending
         </Badge>
       );
     case "extracted":
     case "validated":
       return (
-        <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/25">
+        <Badge className="bg-warning/15 text-warning border-warning/25">
           Ready for Review
         </Badge>
       );
     case "approved":
       return (
-        <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/25">
+        <Badge className="bg-success/15 text-success border-success/25">
           Approved
         </Badge>
       );
@@ -211,10 +211,10 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
 
         {/* Approved state banner */}
         {isApproved && (
-          <div className="mb-6 flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-4 py-3">
-            <CheckCircle2Icon className="size-5 text-emerald-400" />
+          <div className="mb-6 flex items-center gap-3 rounded-lg border border-success/25 bg-success/5 px-4 py-3">
+            <CheckCircle2Icon className="size-5 text-success" />
             <div>
-              <p className="text-sm font-medium text-emerald-400">
+              <p className="text-sm font-medium text-success">
                 Approved by {localApprovedBy}
               </p>
               {run.approvedAt && (

@@ -31,16 +31,16 @@ export function ApprovalBar({
     <div className="fixed inset-x-0 bottom-0 z-50 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur-sm">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-6">
         {/* Left: Counts */}
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-emerald-400">
+        <div className="flex items-center gap-3 text-sm tabular-nums">
+          <span className="text-success">
             {passingCount} passing
           </span>
-          <span className="text-zinc-600">|</span>
-          <span className="text-amber-400">
+          <span className="text-muted-foreground/40">|</span>
+          <span className="text-warning">
             {warningCount} warnings
           </span>
-          <span className="text-zinc-600">|</span>
-          <span className="text-red-400">
+          <span className="text-muted-foreground/40">|</span>
+          <span className="text-destructive">
             {failCount} failures
           </span>
         </div>

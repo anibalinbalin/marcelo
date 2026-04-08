@@ -34,8 +34,8 @@ export default async function DashboardPage() {
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-5xl px-6 py-10">
         <div className="mb-8">
-          <h1 className="text-2xl font-semibold tracking-tight">Fundamenta</h1>
-          <p className="text-sm text-muted-foreground mt-1">
+          <h1 className="text-2xl font-semibold tracking-tight text-balance">Fundamenta</h1>
+          <p className="text-sm text-muted-foreground mt-1 text-pretty">
             Equity Research Tools
           </p>
         </div>
@@ -44,8 +44,8 @@ export default async function DashboardPage() {
           camilaContent={
             <div className="space-y-6">
               <div>
-                <h2 className="text-lg font-semibold tracking-tight">Report Populator</h2>
-                <p className="text-sm text-muted-foreground mt-1">
+                <h2 className="text-lg font-semibold tracking-tight text-balance">Report Populator</h2>
+                <p className="text-sm text-muted-foreground mt-1 text-pretty">
                   Quarterly financial report auto-populator
                 </p>
               </div>
@@ -82,8 +82,8 @@ export default async function DashboardPage() {
           jpContent={
             <div className="space-y-6">
               <div>
-                <h2 className="text-lg font-semibold tracking-tight">Reconciliación Simultáneas</h2>
-                <p className="text-sm text-muted-foreground mt-1">
+                <h2 className="text-lg font-semibold tracking-tight text-balance">Reconciliación Simultáneas</h2>
+                <p className="text-sm text-muted-foreground mt-1 text-pretty">
                   Compara dos extractos LarrainVial e identifica terminadas, nuevas y persistentes
                 </p>
               </div>

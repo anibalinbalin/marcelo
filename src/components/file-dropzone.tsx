@@ -81,7 +81,7 @@ export function FileDropzone({
         </div>
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon"
           onClick={handleRemove}
           aria-label="Remove file"
         >
