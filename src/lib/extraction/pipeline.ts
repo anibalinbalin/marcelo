@@ -430,9 +430,9 @@ async function extractFromExcel(
 
       // Find the column with the target header.
       // Supports string match (e.g., "4Q25") and date match (e.g., "4Q25" → Dec 2025).
-      // Scans row 6 first (period labels), falls back to row 4 if row 6 has dates.
+      // Scans rows 6, 4, 2 for period labels (different source files use different rows).
       let dataCol: number | null = null;
-      for (const scanRow of [6, 4]) {
+      for (const scanRow of [6, 4, 2]) {
         for (let c = 1; c <= ws.columnCount; c++) {
           const v = ws.getCell(scanRow, c).value;
           const display = v && typeof v === "object" && "result" in v ? v.result : v;
@@ -468,7 +468,7 @@ async function extractFromExcel(
 
       // Build label→value map (check columns B=2 and C=3 for EN/PT labels)
       const labelMap = new Map<string, number>();
-      for (let r = 7; r <= ws.rowCount; r++) {
+      for (let r = 3; r <= ws.rowCount; r++) {
         const labelB = ws.getCell(r, 2).value;
         const labelC = ws.getCell(r, 3).value;
         const raw = ws.getCell(r, dataCol).value;

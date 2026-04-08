@@ -33,12 +33,31 @@ const LREN3_MAPPINGS = [
   { sourceSection: "Income Statement", sourceLabel: "Other Operating Income", targetRow: 15, valueTransform: null, validationSign: null },
 
   // ─── Balance Sheet (from "Balance Sheet" sheet in Planilhas) ───
-  // PROJ [V] rows — BS labels are in column C of source
+  // PROJ [V] rows — BS labels are in column C (EN) of source
+  // Assets
   { sourceSection: "Balance Sheet", sourceLabel: "Cash & Cash Equivalents", targetRow: 90, valueTransform: null, validationSign: "positive" },
   { sourceSection: "Balance Sheet", sourceLabel: "Short-Term Investments", targetRow: 91, valueTransform: null, validationSign: "positive" },
   { sourceSection: "Balance Sheet", sourceLabel: "Trade Accounts Receivable", targetRow: 92, valueTransform: null, validationSign: "positive" },
   { sourceSection: "Balance Sheet", sourceLabel: "Inventories", targetRow: 93, valueTransform: null, validationSign: "positive" },
   { sourceSection: "Balance Sheet", sourceLabel: "Total Assets", targetRow: 107, valueTransform: null, validationSign: "positive" },
+
+  // Liabilities (unique labels only — duplicated current/noncurrent labels use last-wins)
+  // Skipped: row 108 PASSIVO CIRCULANTE ("Current " is duplicated with assets row 9)
+  // Skipped: row 109 Fornecedores ("Suppliers" duplicated — last-wins gives noncurrent row 59)
+  // Skipped: rows 111-113 CP detail (Loans/Lease/FinProducts duplicated — last-wins gives noncurrent)
+  { sourceSection: "Balance Sheet", sourceLabel: "Taxes obligations", targetRow: 114, valueTransform: null, validationSign: "positive" },
+  { sourceSection: "Balance Sheet", sourceLabel: "Social and labor obligations", targetRow: 115, valueTransform: null, validationSign: "positive" },
+  { sourceSection: "Balance Sheet", sourceLabel: "Liabilities Under Bylaws", targetRow: 116, valueTransform: null, validationSign: "positive" },
+  // "Noncurrent" (row 54) is unique — assets row 20 is "Non-current" (hyphenated)
+  { sourceSection: "Balance Sheet", sourceLabel: "Noncurrent", targetRow: 119, valueTransform: null, validationSign: "positive" },
+  // LP detail rows: last-wins = noncurrent values (rows 55-57), which IS what we want
+  { sourceSection: "Balance Sheet", sourceLabel: "Loans, Financing and Debentures", targetRow: 120, valueTransform: null, validationSign: "positive" },
+  { sourceSection: "Balance Sheet", sourceLabel: "Financing - Financial Products Operations", targetRow: 121, valueTransform: null, validationSign: "positive" },
+  { sourceSection: "Balance Sheet", sourceLabel: "Financing Lease", targetRow: 122, valueTransform: null, validationSign: "positive" },
+
+  // Equity
+  { sourceSection: "Balance Sheet", sourceLabel: "Shareholder's Equity", targetRow: 126, valueTransform: null, validationSign: "positive" },
+  { sourceSection: "Balance Sheet", sourceLabel: "Liabilities and Shareholder's Equity", targetRow: 128, valueTransform: null, validationSign: "positive" },
 ];
 
 async function setup() {
