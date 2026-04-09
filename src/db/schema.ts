@@ -53,6 +53,7 @@ export const extractionRuns = pgTable('extraction_runs', {
   approvedBy: text('approved_by'),
   approvedAt: timestamp('approved_at'),
   outputFileUrl: text('output_file_url'),
+  errorMessage: text('error_message'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 

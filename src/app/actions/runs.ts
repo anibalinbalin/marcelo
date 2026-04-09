@@ -40,6 +40,7 @@ export async function updateRunStatus(
     approvedBy: string;
     approvedAt: Date;
     outputFileUrl: string;
+    errorMessage: string | null;
   }>
 ) {
   const db = getDb();

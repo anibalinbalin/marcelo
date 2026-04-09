@@ -45,7 +45,8 @@ export async function POST(request: NextRequest) {
       pipelineResult = await runExtractionPipeline(run.id);
     } catch (pipelineErr) {
       const msg = pipelineErr instanceof Error ? pipelineErr.message : "Extraction failed";
-      await updateRunStatus(run.id, "error");
+      console.error(`[upload] Extraction failed for run ${run.id} (company ${parsedCompanyId}, ${quarter}):`, pipelineErr);
+      await updateRunStatus(run.id, "error", { errorMessage: msg });
       return NextResponse.json({
         runId: run.id,
         status: "error",

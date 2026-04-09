@@ -63,6 +63,7 @@ export default async function RunReviewPage({ params }: Props) {
         approvedBy: run.approvedBy,
         approvedAt: run.approvedAt?.toISOString() ?? null,
         outputFileUrl: run.outputFileUrl,
+        errorMessage: run.errorMessage,
       }}
       values={valuesWithMappings}
     />

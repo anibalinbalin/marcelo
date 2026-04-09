@@ -30,6 +30,7 @@ interface ReviewClientProps {
     approvedBy: string | null;
     approvedAt: string | null;
     outputFileUrl: string | null;
+    errorMessage: string | null;
   };
   values: ExtractedValueWithMapping[];
 }
@@ -203,8 +204,14 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
             <AlertCircleIcon className="size-4" />
             <AlertTitle>Extraction Failed</AlertTitle>
             <AlertDescription>
-              An error occurred during extraction. Please try uploading the
-              report again.
+              {run.errorMessage ? (
+                <>
+                  <div className="font-mono text-xs break-all">{run.errorMessage}</div>
+                  <div className="mt-2">Please try uploading the report again.</div>
+                </>
+              ) : (
+                "An error occurred during extraction. Please try uploading the report again."
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -301,7 +308,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
             onApprove={handleApprove}
             onDownload={handleDownload}
             isApproved={isApproved || isApproving}
-            isDownloadReady={isApproved}
+            isDownloadReady={true}
           />
         )}
     </div>
