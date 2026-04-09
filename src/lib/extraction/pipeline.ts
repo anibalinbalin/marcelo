@@ -274,7 +274,7 @@ async function extractFromExcelPython(
         }), "input.xlsx");
         form.append("sheet_name", sheetName);
         form.append("target_header", targetHeader);
-        form.append("label_cols", "0,1");
+        form.append("label_cols", "1,2");
         const res = await fetch(`${process.env.EXTRACTION_API_URL}/extract/excel`, {
           method: "POST",
           body: form,
@@ -287,7 +287,7 @@ async function extractFromExcelPython(
       } else {
         result = await new Promise<string>((resolve, reject) => {
           const scriptPath = join(process.cwd(), "src/lib/pdf/extract-excel.py");
-          const proc = spawn("python3", [scriptPath, tmpPath, sheetName, targetHeader, "0,1"]);
+          const proc = spawn("python3", [scriptPath, tmpPath, sheetName, targetHeader, "1,2"]);
           let stdout = "";
           let stderr = "";
           proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
