@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/status-badge";
 import { MainTabs } from "@/components/main-tabs";
 import { ReconcilePanel } from "@/components/reconcile-panel";
+import { ExtractionHealthBadge } from "@/components/extraction-health-badge";
 
 // Placeholder data for v1 (before DB is connected)
 const PLACEHOLDER_COMPANIES = [
@@ -33,11 +34,14 @@ export default async function DashboardPage() {
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-5xl px-6 py-10">
-        <div className="mb-8">
-          <h1 className="text-2xl font-semibold tracking-tight text-balance">Fundamenta</h1>
-          <p className="text-sm text-muted-foreground mt-1 text-pretty">
-            Equity Research Tools
-          </p>
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-balance">Fundamenta</h1>
+            <p className="text-sm text-muted-foreground mt-1 text-pretty">
+              Equity Research Tools
+            </p>
+          </div>
+          <ExtractionHealthBadge />
         </div>
 
         <MainTabs
