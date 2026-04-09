@@ -13,6 +13,7 @@ export interface WritebackResult {
   filename: string;
   cellsWritten: number;
   integrityErrors: string[];
+  integrityWarnings: string[];
 }
 
 export async function generatePopulatedExcel(runId: number): Promise<WritebackResult> {
@@ -89,5 +90,6 @@ export async function generatePopulatedExcel(runId: number): Promise<WritebackRe
     filename,
     cellsWritten: cellWrites.length,
     integrityErrors: integrityReport.errors,
+    integrityWarnings: integrityReport.warnings,
   };
 }

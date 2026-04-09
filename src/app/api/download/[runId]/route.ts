@@ -14,8 +14,29 @@ export async function GET(
   try {
     const result = await generatePopulatedExcel(runIdNum);
 
+    if (result.integrityWarnings.length > 0) {
+      console.info(
+        `[download ${runIdNum}] integrity warnings:`,
+        result.integrityWarnings
+      );
+    }
+
+    // Hard integrity failure — at least one written cell did not land in the
+    // output file. Block the download so the analyst never ships broken data.
     if (result.integrityErrors.length > 0) {
-      console.warn("Integrity warnings during writeback:", result.integrityErrors);
+      console.error(
+        `[download ${runIdNum}] integrity FAILED, blocking download:`,
+        result.integrityErrors
+      );
+      return NextResponse.json(
+        {
+          error:
+            "Integrity check failed: some extracted values did not land in the output file.",
+          details: result.integrityErrors,
+          cellsWritten: result.cellsWritten,
+        },
+        { status: 422 }
+      );
     }
 
     return new NextResponse(new Uint8Array(result.buffer), {
@@ -27,6 +48,7 @@ export async function GET(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[download ${runIdNum}] error:`, error);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

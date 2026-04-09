@@ -109,6 +109,18 @@ export async function approveValues(
     const { put } = await import("@vercel/blob");
 
     const result = await generatePopulatedExcel(runId);
+
+    // If the writeback failed to land every value, skip the blob upload so
+    // we never serve a silently-broken archive. The UI will fall back to the
+    // /api/download route, which returns a 422 with the specific failures.
+    if (result.integrityErrors.length > 0) {
+      console.error(
+        `[approve ${runId}] integrity FAILED, skipping blob upload:`,
+        result.integrityErrors
+      );
+      return run;
+    }
+
     const blob = await put(
       `output/${run.companyId}/${run.quarter}/${result.filename}`,
       result.buffer,
@@ -122,8 +134,9 @@ export async function approveValues(
       .where(eq(extractionRuns.id, runId));
 
     return { ...run, outputFileUrl: blob.url };
-  } catch {
-    // Writeback failed but approval succeeded — user can retry download later
+  } catch (err) {
+    // Writeback failed but approval succeeded — user can retry download later.
+    console.error(`[approve ${runId}] writeback error:`, err);
     return run;
   }
 }

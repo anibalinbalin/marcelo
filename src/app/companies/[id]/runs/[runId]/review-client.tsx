@@ -71,6 +71,11 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
   const [analystName, setAnalystName] = useState("");
   const [overrides, setOverrides] = useState<Map<number, string>>(new Map());
   const [isApproving, setIsApproving] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<{
+    message: string;
+    details: string[];
+  } | null>(null);
   const [localStatus, setLocalStatus] = useState(run.status);
   const [localApprovedBy, setLocalApprovedBy] = useState(run.approvedBy);
 
@@ -141,14 +146,50 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
     }
   }, [analystName, overrides, run.id, router]);
 
-  const handleDownload = useCallback(() => {
-    if (run.outputFileUrl) {
-      window.open(run.outputFileUrl, "_blank");
-    } else {
-      // Fallback: generate on-demand via the download API route
-      window.open(`/api/download/${run.id}`, "_blank");
+  const handleDownload = useCallback(async () => {
+    setDownloadError(null);
+    setIsDownloading(true);
+    try {
+      // Always route through /api/download so the server-side integrity
+      // check runs on every download and we never ship a silently-broken
+      // file. The pre-built blob is only used as a cache hint.
+      const res = await fetch(`/api/download/${run.id}`);
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          details?: string[];
+        };
+        setDownloadError({
+          message: body.error ?? `Download failed (HTTP ${res.status})`,
+          details: body.details ?? [],
+        });
+        return;
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      const filename = match?.[1] ?? `${company.ticker}_${run.quarter}.xlsx`;
+
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setDownloadError({
+        message:
+          err instanceof Error ? err.message : "Unexpected download error",
+        details: [],
+      });
+    } finally {
+      setIsDownloading(false);
     }
-  }, [run.outputFileUrl, run.id]);
+  }, [run.id, run.quarter, company.ticker]);
 
   const isApproved = localStatus === "approved";
 
@@ -233,6 +274,34 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
           </div>
         )}
 
+        {/* Download integrity failure */}
+        {downloadError && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertCircleIcon className="size-4" />
+            <AlertTitle>Download blocked - integrity check failed</AlertTitle>
+            <AlertDescription>
+              <div>{downloadError.message}</div>
+              {downloadError.details.length > 0 && (
+                <ul className="mt-2 list-disc pl-4 font-mono text-xs break-all">
+                  {downloadError.details.slice(0, 6).map((d, i) => (
+                    <li key={i}>{d}</li>
+                  ))}
+                  {downloadError.details.length > 6 && (
+                    <li>
+                      ... and {downloadError.details.length - 6} more
+                    </li>
+                  )}
+                </ul>
+              )}
+              <div className="mt-2 text-xs">
+                This means one or more extracted values did not land in the
+                output file. Re-upload the report to try again, or send this
+                error to Anibal.
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Review UI (extracted/validated/approved states) */}
         {(localStatus === "extracted" ||
           localStatus === "validated" ||
@@ -308,7 +377,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
             onApprove={handleApprove}
             onDownload={handleDownload}
             isApproved={isApproved || isApproving}
-            isDownloadReady={true}
+            isDownloadReady={!isDownloading}
           />
         )}
     </div>

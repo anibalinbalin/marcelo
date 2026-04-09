@@ -11,7 +11,10 @@ export interface IntegrityReport {
   sheetCountMatch: boolean;
   formulaCountMatch: Record<string, { original: number; output: number; match: boolean }>;
   writtenCellsVerified: boolean;
+  /** Hard errors — values that did not land in the file. Block the download. */
   errors: string[];
+  /** Soft signals — counts drifting, etc. Informational only. */
+  warnings: string[];
 }
 
 export async function writeBlueValues(
@@ -54,6 +57,7 @@ export async function writeBlueValues(
 
   // 3. Write values to specified cells
   const writeErrors: string[] = [];
+  const writeWarnings: string[] = [];
   for (const { sheet, row, col, value } of valuesToWrite) {
     const ws = wb.getWorksheet(sheet);
     if (!ws) {
@@ -103,7 +107,9 @@ export async function writeBlueValues(
     const out = outputFormulaCounts[sheetName] ?? 0;
     formulaCountMatch[sheetName] = { original: orig, output: out, match: orig === out };
     if (orig !== out) {
-      writeErrors.push(`Formula count mismatch in "${sheetName}": ${orig} → ${out}`);
+      // Writing a number over a formula cell legitimately drops the formula
+      // count, so this is informational rather than a failure.
+      writeWarnings.push(`Formula count in "${sheetName}": ${orig} -> ${out}`);
     }
   }
 
@@ -114,6 +120,7 @@ export async function writeBlueValues(
       formulaCountMatch,
       writtenCellsVerified: allCellsVerified,
       errors: writeErrors,
+      warnings: writeWarnings,
     },
   };
 }
