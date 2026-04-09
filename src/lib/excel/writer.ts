@@ -22,6 +22,23 @@ export async function writeBlueValues(
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(templateBuffer as never);
 
+  // 1a. Explode shared formulas into regular per-cell formulas.
+  // ExcelJS 4.x has a known bug where overwriting cells in a sheet that contains
+  // shared formulas can corrupt the master/clone chain, producing
+  // "Shared Formula master must exist above and or left of clone for cell XYZ"
+  // when saving. Rewriting each formula cell as a stand-alone formula breaks
+  // the shared chain and avoids the serializer crash.
+  // See: https://github.com/exceljs/exceljs/issues/1464
+  for (const ws of wb.worksheets) {
+    ws.eachRow({ includeEmpty: false }, (row) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        if (cell.type === ExcelJS.ValueType.Formula && cell.formula) {
+          cell.value = { formula: cell.formula, result: cell.result };
+        }
+      });
+    });
+  }
+
   // 2. Count formulas per sheet BEFORE writing (for integrity check)
   const originalFormulaCounts: Record<string, number> = {};
   const originalSheetCount = wb.worksheets.length;
