@@ -5,20 +5,23 @@ import { RefreshCwIcon } from "lucide-react";
 
 const POLL_INTERVAL_MS = 60_000;
 
-async function fetchVersion(): Promise<string | null> {
+type VersionInfo = { version: string; sha: string };
+
+async function fetchVersion(): Promise<VersionInfo | null> {
   try {
     const res = await fetch("/api/version", { cache: "no-store" });
     if (!res.ok) return null;
-    const json = (await res.json()) as { version?: string };
-    return json.version ?? null;
+    const json = (await res.json()) as { version?: string; sha?: string };
+    if (!json.version || !json.sha) return null;
+    return { version: json.version, sha: json.sha };
   } catch {
     return null;
   }
 }
 
 export function VersionWatcher() {
-  const [current, setCurrent] = useState<string | null>(null);
-  const [latest, setLatest] = useState<string | null>(null);
+  const [current, setCurrent] = useState<VersionInfo | null>(null);
+  const [latest, setLatest] = useState<VersionInfo | null>(null);
   const initialRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -27,7 +30,7 @@ export function VersionWatcher() {
     (async () => {
       const v = await fetchVersion();
       if (cancelled || !v) return;
-      initialRef.current = v;
+      initialRef.current = v.sha;
       setCurrent(v);
     })();
 
@@ -46,10 +49,9 @@ export function VersionWatcher() {
   if (!current) return null;
 
   const updateAvailable =
-    latest !== null && initialRef.current !== null && latest !== initialRef.current;
+    latest !== null && initialRef.current !== null && latest.sha !== initialRef.current;
 
   if (updateAvailable) {
-    const short = (latest ?? "").slice(0, 7);
     return (
       <button
         type="button"
@@ -58,14 +60,14 @@ export function VersionWatcher() {
       >
         <RefreshCwIcon className="size-3.5" />
         <span>New version available - click to refresh</span>
-        <span className="font-mono opacity-60">{short}</span>
+        <span className="font-mono opacity-80">v{latest?.version}</span>
       </button>
     );
   }
 
   return (
-    <div className="fixed bottom-3 left-3 z-50 pointer-events-none rounded-full bg-muted/40 px-2 py-0.5 font-mono text-[10px] text-muted-foreground/60 tabular-nums">
-      v {current.slice(0, 7)}
+    <div className="fixed bottom-3 left-3 z-50 pointer-events-none rounded-full border border-white/10 bg-zinc-900/80 px-2.5 py-1 font-mono text-[11px] text-white tabular-nums shadow-sm backdrop-blur-sm">
+      v{current.version}
     </div>
   );
 }

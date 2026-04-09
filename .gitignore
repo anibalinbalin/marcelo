@@ -44,3 +44,6 @@ node_modules
 .env*.local
 data/
 .gstack/
+
+# generated at build
+public/version.json
