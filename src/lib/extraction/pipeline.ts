@@ -299,25 +299,40 @@ async function extractFromExcelPython(
         });
       }
 
-      const parsed = JSON.parse(result) as { error?: string; data?: Record<string, number> };
+      const parsed = JSON.parse(result) as {
+        error?: string;
+        data?: Record<string, number>;
+        row_data?: Record<string, number>;
+      };
       if (parsed.error) {
         errors.push(parsed.error);
         continue;
       }
 
       const labelMap = parsed.data ?? {};
+      const rowMap = parsed.row_data ?? {};
 
       for (const mapping of groupMappings) {
-        const normalized = mapping.sourceLabel.toLowerCase().trim();
-        let value: number | null = labelMap[normalized] ?? null;
+        let value: number | null = null;
 
-        // Fuzzy match fallback
+        // Prefer row-based lookup when sourceRow is specified (disambiguates duplicate labels)
+        if (mapping.sourceRow && rowMap[String(mapping.sourceRow)] !== undefined) {
+          value = rowMap[String(mapping.sourceRow)];
+        }
+
+        // Fall back to label matching
         if (value === null) {
-          let bestDiff = Infinity;
-          for (const [k, v] of Object.entries(labelMap)) {
-            if (k.includes(normalized) || normalized.includes(k)) {
-              const diff = Math.abs(k.length - normalized.length);
-              if (diff < bestDiff) { bestDiff = diff; value = v; }
+          const normalized = mapping.sourceLabel.toLowerCase().trim();
+          value = labelMap[normalized] ?? null;
+
+          // Fuzzy match fallback
+          if (value === null) {
+            let bestDiff = Infinity;
+            for (const [k, v] of Object.entries(labelMap)) {
+              if (k.includes(normalized) || normalized.includes(k)) {
+                const diff = Math.abs(k.length - normalized.length);
+                if (diff < bestDiff) { bestDiff = diff; value = v; }
+              }
             }
           }
         }

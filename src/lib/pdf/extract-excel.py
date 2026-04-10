@@ -97,14 +97,18 @@ def extract(xlsx_path, sheet_name, target_header, label_cols=None):
         print(json.dumps({"error": f"Column '{target_header}' not found in sheet '{sheet_name}'"}))
         sys.exit(1)
 
-    # Second pass: build label→value map
+    # Second pass: build label→value map AND row-indexed map
     data = {}
-    for row in rows_data:
+    row_data = {}  # row_number (1-based) → value
+    for row_idx, row in enumerate(rows_data):
         if col_idx >= len(row):
             continue
         val = row[col_idx]
         if val is None or not isinstance(val, (int, float)):
             continue
+
+        row_num = row_idx + 1  # 1-based row number
+        row_data[str(row_num)] = val
 
         # Check label columns (0-indexed)
         for lc in label_cols:
@@ -115,7 +119,7 @@ def extract(xlsx_path, sheet_name, target_header, label_cols=None):
 
     wb.close()
 
-    return {"column": col_idx, "count": len(data), "data": data}
+    return {"column": col_idx, "count": len(data), "data": data, "row_data": row_data}
 
 
 if __name__ == "__main__":

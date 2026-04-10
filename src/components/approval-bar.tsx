@@ -72,7 +72,7 @@ export function ApprovalBar({
           <Button
             variant="outline"
             onClick={onDownload}
-            disabled={!isDownloadReady}
+            disabled={!isDownloadReady || !isApproved}
             size="lg"
           >
             <DownloadIcon className="size-4" data-icon="inline-start" />

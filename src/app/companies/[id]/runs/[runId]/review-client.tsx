@@ -76,6 +76,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
     message: string;
     details: string[];
   } | null>(null);
+  const [cellsWritten, setCellsWritten] = useState<number | null>(null);
   const [localStatus, setLocalStatus] = useState(run.status);
   const [localApprovedBy, setLocalApprovedBy] = useState(run.approvedBy);
 
@@ -148,6 +149,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
 
   const handleDownload = useCallback(async () => {
     setDownloadError(null);
+    setCellsWritten(null);
     setIsDownloading(true);
     try {
       // Always route through /api/download so the server-side integrity
@@ -166,6 +168,9 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
         });
         return;
       }
+
+      const written = parseInt(res.headers.get("X-Cells-Written") ?? "0", 10);
+      setCellsWritten(written);
 
       const blob = await res.blob();
       const disposition = res.headers.get("Content-Disposition") ?? "";
@@ -272,6 +277,22 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
               )}
             </div>
           </div>
+        )}
+
+        {/* Download success */}
+        {cellsWritten !== null && !downloadError && (
+          <Alert className="mb-6 border-success/25 bg-success/5">
+            <CheckCircle2Icon className="size-4 text-success" />
+            <AlertTitle className="text-success">Download complete</AlertTitle>
+            <AlertDescription>
+              {cellsWritten} values written to the PROJ sheet.
+              If formulas still show old results, press{" "}
+              <kbd className="rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 font-[family-name:var(--font-geist-mono)] text-xs">
+                Ctrl+Alt+F9
+              </kbd>{" "}
+              in Excel to force recalculation.
+            </AlertDescription>
+          </Alert>
         )}
 
         {/* Download integrity failure */}
