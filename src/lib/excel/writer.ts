@@ -25,7 +25,12 @@ export async function writeBlueValues(
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(templateBuffer as never);
 
-  // 1a. Explode shared formulas into regular per-cell formulas.
+  // 1a. Force Excel to recalculate all formulas when the file is opened.
+  // Without this, formula cells show stale cached results from the template,
+  // especially in Protected View where Excel skips automatic recalculation.
+  wb.calcProperties.fullCalcOnLoad = true;
+
+  // 1b. Explode shared formulas into regular per-cell formulas.
   // ExcelJS 4.x has a known bug where overwriting cells in a sheet that contains
   // shared formulas can corrupt the master/clone chain, producing
   // "Shared Formula master must exist above and or left of clone for cell XYZ"
