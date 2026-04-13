@@ -7,7 +7,8 @@
     "prebuild": "node scripts/gen-version.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:push": "dotenv -e .env.local -- drizzle-kit push"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.51",
