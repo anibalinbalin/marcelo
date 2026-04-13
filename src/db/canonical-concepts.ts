@@ -54,6 +54,7 @@ export const CANONICAL_CONCEPTS: CanonicalConceptSeed[] = [
   { name: 'Property Plant and Equipment', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Right of Use Assets', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Intangible Assets', category: 'balance_sheet', typicalSign: 'positive' },
+  { name: 'Other Noncurrent Assets', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Total Noncurrent Assets', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Total Assets', category: 'balance_sheet', typicalSign: 'positive' },
 
@@ -62,12 +63,15 @@ export const CANONICAL_CONCEPTS: CanonicalConceptSeed[] = [
   { name: 'Loans and Financing Current', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Lease Liabilities Current', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Other Accounts Payable Current', category: 'balance_sheet', typicalSign: 'positive' },
+  { name: 'Other Current Liabilities', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Total Current Liabilities', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Loans and Financing Noncurrent', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Lease Liabilities Noncurrent', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Deferred Income Tax Noncurrent', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Other Accounts Payable Noncurrent', category: 'balance_sheet', typicalSign: 'positive' },
+  { name: 'Other Noncurrent Liabilities', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Total Noncurrent Liabilities', category: 'balance_sheet', typicalSign: 'positive' },
+  { name: 'Total Liabilities', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Stockholders Equity', category: 'balance_sheet', typicalSign: 'positive' },
   { name: 'Total Liabilities and Equity', category: 'balance_sheet', typicalSign: 'positive' },
 
