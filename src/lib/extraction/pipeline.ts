@@ -14,7 +14,26 @@ import { eq, and } from "drizzle-orm";
 import { extractPdfTables, type PdfSection } from "@/lib/pdf/extract";
 import { extractPdfText, type ParsedLine } from "@/lib/pdf/extract-text";
 import { extractPdfVision } from "@/lib/pdf/extract-vision";
-import { runValidation, type ValidationInput } from "@/lib/validation/engine";
+import {
+  runValidation,
+  runAdversarialValidation,
+  shouldTriggerAdversarial,
+  type ValidationInput,
+  type ExtractedValueForValidation,
+  type AdversarialResult,
+} from "@/lib/validation/engine";
+
+// ── Extraction result type ──────────────────────────────────────────────────
+
+export interface ExtractionResult {
+  extracted: number;
+  validated: number;
+  errors: string[];
+  /** Whether adversarial validation was triggered (warnings existed) */
+  adversarialTriggered?: boolean;
+  /** Result of adversarial validation if triggered */
+  adversarialResult?: AdversarialResult["status"];
+}
 
 // ── Value transforms ────────────────────────────────────────────────────────
 
@@ -36,6 +55,76 @@ function applyTransform(
     default:
       return rawValue;
   }
+}
+
+// ── Adversarial validation helper ───────────────────────────────────────────
+
+/**
+ * Run adversarial validation on extracted values if warnings exist.
+ * Updates validation status in DB if adversarial validation changes the outcome.
+ *
+ * @param db - Database instance
+ * @param values - Extracted values with basic validation results
+ * @param mappings - Field mappings for context
+ * @returns Adversarial validation result or null if not triggered
+ */
+async function maybeRunAdversarialValidation(
+  db: ReturnType<typeof getDb>,
+  values: { id: number; extractedValue: string | null; confidence: number | null; mappingId: number | null }[],
+  mappings: { id: number; sourceLabel: string; targetSheet: string }[],
+  basicResults: { id: number; status: "pass" | "warning" | "fail"; message: string | null }[]
+): Promise<{ triggered: boolean; result?: Awaited<ReturnType<typeof runAdversarialValidation>> }> {
+  // Filter out values without mappings
+  const validValues = values.filter(v => v.mappingId !== null);
+  if (validValues.length === 0) return { triggered: false };
+
+  // Build values for adversarial check
+  const adversarialInputs: ExtractedValueForValidation[] = validValues.map(v => {
+    const mapping = mappings.find(m => m.id === v.mappingId)!;
+    const basicResult = basicResults.find(r => r.id === v.id);
+    return {
+      id: v.id,
+      sourceLabel: mapping.sourceLabel,
+      extractedValue: v.extractedValue ?? "0",
+      confidence: v.confidence ?? 1.0,
+      validationStatus: basicResult?.status ?? null,
+      validationMessage: basicResult?.message ?? null,
+    };
+  });
+
+  // Check if adversarial validation should run
+  if (!shouldTriggerAdversarial(adversarialInputs)) {
+    return { triggered: false };
+  }
+
+  // Determine statement type from target sheet
+  const targetSheet = mappings[0]?.targetSheet?.toLowerCase() ?? "";
+  const statementType: "income" | "balance" | "cashflow" =
+    targetSheet.includes("is") || targetSheet.includes("income") ? "income" :
+    targetSheet.includes("bs") || targetSheet.includes("balance") ? "balance" :
+    "income"; // default to income statement constraints
+
+  // Run adversarial validation
+  const result = await runAdversarialValidation(adversarialInputs, statementType);
+
+  // If adversarial validation says needs_review, update status in DB
+  if (result.status === "needs_review") {
+    for (const v of adversarialInputs) {
+      const basicResult = basicResults.find(r => r.id === v.id);
+      // Only upgrade warnings to needs_review, don't downgrade passes
+      if (basicResult?.status === "warning") {
+        await db
+          .update(extractedValues)
+          .set({
+            validationStatus: "needs_review",
+            validationMessage: `${basicResult.message} | Adversarial: ${result.message}`,
+          })
+          .where(eq(extractedValues.id, v.id));
+      }
+    }
+  }
+
+  return { triggered: true, result };
 }
 
 // ── BIVA column detection ──────────────────────────────────────────────────
@@ -234,7 +323,7 @@ async function extractFromExcelPython(
   mappings: typeof fieldMappings.$inferSelect[],
   runId: number,
   errors: string[]
-): Promise<{ extracted: number; validated: number; errors: string[] }> {
+): Promise<ExtractionResult> {
   const { spawn } = await import("child_process");
   const { writeFile, unlink } = await import("fs/promises");
   const { join } = await import("path");
@@ -377,6 +466,14 @@ async function extractFromExcelPython(
         .where(eq(extractedValues.id, vr.id));
     }
 
+    // Run adversarial validation if warnings exist (autoreason-style debate)
+    const adversarialCheck = await maybeRunAdversarialValidation(
+      db,
+      inserted,
+      mappings,
+      validationResults
+    );
+
     await db
       .update(extractionRuns)
       .set({ status: "extracted", extractedAt: new Date() })
@@ -385,6 +482,8 @@ async function extractFromExcelPython(
     return {
       extracted: inserted.length,
       validated: validationResults.filter((r) => r.status === "pass").length,
+      adversarialTriggered: adversarialCheck.triggered,
+      adversarialResult: adversarialCheck.result?.status,
       errors,
     };
   } finally {
@@ -406,9 +505,9 @@ async function extractFromExcel(
   fileBuffer: Buffer,
   mappings: typeof fieldMappings.$inferSelect[],
   runId: number,
-  companyId: number,
+  _companyId: number,
   errors: string[]
-): Promise<{ extracted: number; validated: number; errors: string[] }> {
+): Promise<ExtractionResult> {
   // Files >2MB crash ExcelJS with OOM — use Python (openpyxl) for large files.
   // ExcelJS inflates xlsx into in-memory DOM; complex workbooks blow up the heap.
   const MAX_EXCELJS_SIZE = 2 * 1024 * 1024; // 2MB
@@ -574,6 +673,14 @@ async function extractFromExcel(
       .where(eq(extractedValues.id, result.id));
   }
 
+  // Run adversarial validation if warnings exist (autoreason-style debate)
+  const adversarialCheck = await maybeRunAdversarialValidation(
+    db,
+    inserted,
+    mappings,
+    validationResults
+  );
+
   await db
     .update(extractionRuns)
     .set({ status: "extracted", extractedAt: new Date() })
@@ -582,17 +689,15 @@ async function extractFromExcel(
   return {
     extracted: inserted.length,
     validated: validationResults.filter((r) => r.status === "pass").length,
+    adversarialTriggered: adversarialCheck.triggered,
+    adversarialResult: adversarialCheck.result?.status,
     errors,
   };
 }
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
 
-export async function runExtractionPipeline(runId: number): Promise<{
-  extracted: number;
-  validated: number;
-  errors: string[];
-}> {
+export async function runExtractionPipeline(runId: number): Promise<ExtractionResult> {
   const db = getDb();
   const errors: string[] = [];
 
@@ -769,7 +874,15 @@ export async function runExtractionPipeline(runId: number): Promise<{
       .where(eq(extractedValues.id, result.id));
   }
 
-  // 9. Update run status
+  // 9. Run adversarial validation if warnings exist (autoreason-style debate)
+  const adversarialCheck = await maybeRunAdversarialValidation(
+    db,
+    inserted,
+    mappings,
+    validationResults
+  );
+
+  // 10. Update run status
   await db
     .update(extractionRuns)
     .set({ status: "extracted", extractedAt: new Date() })
@@ -778,6 +891,8 @@ export async function runExtractionPipeline(runId: number): Promise<{
   return {
     extracted: inserted.length,
     validated: validationResults.filter((r) => r.status === "pass").length,
+    adversarialTriggered: adversarialCheck.triggered,
+    adversarialResult: adversarialCheck.result?.status,
     errors,
   };
 }

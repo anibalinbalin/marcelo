@@ -1,0 +1,390 @@
+/**
+ * Adversarial validation using autoreason-style debate.
+ *
+ * When basic validation produces warnings, this module runs a multi-agent
+ * tournament to verify extraction correctness:
+ *
+ * 1. Critic agent reviews extraction + source, identifies issues
+ * 2. Revision agent proposes corrections
+ * 3. Judge panel (3 agents) votes on which version is correct
+ *
+ * The convergence mechanism: if the original (A) wins 2 consecutive rounds,
+ * validation passes. If corrections (B/AB) win, we flag for analyst review.
+ */
+import { createOpenAI } from "@ai-sdk/openai";
+import { generateText } from "ai";
+import {
+  getConstraintsForStatement,
+  labelMatches,
+} from "./constraints";
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface ExtractedValueForValidation {
+  id: number;
+  sourceLabel: string;
+  extractedValue: string;
+  confidence: number;
+  validationStatus: string | null;
+  validationMessage: string | null;
+}
+
+export interface AdversarialResult {
+  status: "pass" | "needs_review" | "error";
+  message: string;
+  constraintViolations: ConstraintViolation[];
+  judgeVotes: JudgeVote[];
+  roundsNeeded: number;
+}
+
+interface ConstraintViolation {
+  constraintName: string;
+  expected: number;
+  actual: number;
+  difference: number;
+  severity: "warning" | "error";
+}
+
+interface JudgeVote {
+  judgeId: number;
+  vote: "A" | "B" | "AB";
+  reasoning: string;
+}
+
+interface CriticOutput {
+  issues: {
+    label: string;
+    currentValue: string;
+    problem: string;
+    suggestedValue?: string;
+  }[];
+  arithmeticErrors: string[];
+  overallAssessment: "correct" | "minor_issues" | "major_issues";
+}
+
+// ── Configuration ────────────────────────────────────────────────────────────
+
+const MAX_ROUNDS = 3;
+const CONSECUTIVE_WINS_TO_PASS = 2;
+
+function getOpenRouter() {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
+  return createOpenAI({
+    baseURL: "https://openrouter.ai/api/v1",
+    apiKey,
+  });
+}
+
+// ── Rule-Based Constraint Checking ───────────────────────────────────────────
+
+/**
+ * Check arithmetic constraints against extracted values.
+ * This is the fast path - no LLM needed.
+ */
+export function checkArithmeticConstraints(
+  values: ExtractedValueForValidation[],
+  statementType: "income" | "balance" | "cashflow"
+): ConstraintViolation[] {
+  const constraints = getConstraintsForStatement(statementType);
+  const violations: ConstraintViolation[] = [];
+
+  for (const constraint of constraints) {
+    // Find values that match constraint terms
+    let sum = 0;
+    let termsFound = 0;
+
+    for (const term of constraint.terms) {
+      const match = values.find(v => labelMatches(v.sourceLabel, term.labels));
+      if (match) {
+        const numValue = parseFloat(match.extractedValue);
+        if (!isNaN(numValue)) {
+          sum += numValue * term.coefficient;
+          termsFound++;
+        }
+      }
+    }
+
+    // Find the result value
+    const result = values.find(v => labelMatches(v.sourceLabel, constraint.resultLabel));
+    if (!result || termsFound < 2) continue; // Not enough data to check
+
+    const resultValue = parseFloat(result.extractedValue);
+    if (isNaN(resultValue)) continue;
+
+    const difference = Math.abs(sum - resultValue);
+    if (difference > constraint.tolerance) {
+      violations.push({
+        constraintName: constraint.name,
+        expected: sum,
+        actual: resultValue,
+        difference,
+        severity: difference > constraint.tolerance * 10 ? "error" : "warning",
+      });
+    }
+  }
+
+  return violations;
+}
+
+// ── LLM-Based Adversarial Validation ─────────────────────────────────────────
+
+/**
+ * Run critic agent to identify potential issues.
+ */
+async function runCritic(
+  values: ExtractedValueForValidation[],
+  constraintViolations: ConstraintViolation[]
+): Promise<CriticOutput> {
+  const openrouter = getOpenRouter();
+
+  const valuesTable = values
+    .map(v => `- ${v.sourceLabel}: ${v.extractedValue} (confidence: ${(v.confidence * 100).toFixed(0)}%)`)
+    .join("\n");
+
+  const violationsText = constraintViolations.length > 0
+    ? `\nArithmetic constraint violations detected:\n${constraintViolations.map(v =>
+        `- ${v.constraintName}: expected ${v.expected}, got ${v.actual} (diff: ${v.difference})`
+      ).join("\n")}`
+    : "";
+
+  const prompt = `You are a financial data validation critic. Review these extracted values for errors.
+
+EXTRACTED VALUES:
+${valuesTable}
+${violationsText}
+
+Analyze for:
+1. Arithmetic consistency (do sums match totals?)
+2. Sign errors (expenses should be negative, revenues positive)
+3. Magnitude errors (values off by factor of 1000?)
+4. Label mismatches (value assigned to wrong row?)
+
+Return JSON only:
+{
+  "issues": [{"label": "...", "currentValue": "...", "problem": "...", "suggestedValue": "..."}],
+  "arithmeticErrors": ["description of error..."],
+  "overallAssessment": "correct" | "minor_issues" | "major_issues"
+}`;
+
+  const result = await generateText({
+    model: openrouter("anthropic/claude-haiku-3"),
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  let text = result.text.trim();
+  if (text.startsWith("```")) {
+    text = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+  }
+
+  return JSON.parse(text) as CriticOutput;
+}
+
+/**
+ * Run judge panel to vote on extraction correctness.
+ * Uses Borda count: each judge ranks A (original), B (critic corrections), AB (synthesis).
+ */
+async function runJudgePanel(
+  values: ExtractedValueForValidation[],
+  criticOutput: CriticOutput,
+  constraintViolations: ConstraintViolation[]
+): Promise<JudgeVote[]> {
+  const openrouter = getOpenRouter();
+
+  const valuesTable = values
+    .map(v => `${v.sourceLabel}: ${v.extractedValue}`)
+    .join("\n");
+
+  const issuesTable = criticOutput.issues.length > 0
+    ? criticOutput.issues
+        .map(i => `${i.label}: ${i.currentValue} → ${i.suggestedValue || "?"} (${i.problem})`)
+        .join("\n")
+    : "No issues identified";
+
+  const prompt = `You are a financial data validation judge. Two versions of extracted data exist:
+
+VERSION A (Original extraction):
+${valuesTable}
+
+VERSION B (Critic's corrections):
+${issuesTable}
+
+Arithmetic violations: ${constraintViolations.length > 0 ? constraintViolations.map(v => v.constraintName).join(", ") : "None detected"}
+
+Vote for the most accurate version:
+- A: Original extraction is correct, critic found false positives
+- B: Critic's corrections are needed
+- AB: Partial corrections needed (some critic suggestions valid, some not)
+
+Return JSON only:
+{"vote": "A" | "B" | "AB", "reasoning": "one sentence explanation"}`;
+
+  // Run 3 judges in parallel
+  const judgePromises = [1, 2, 3].map(async (judgeId) => {
+    const result = await generateText({
+      model: openrouter("anthropic/claude-haiku-3"),
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3 + judgeId * 0.1, // Slight variation for diversity
+    });
+
+    let text = result.text.trim();
+    if (text.startsWith("```")) {
+      text = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+    }
+
+    const parsed = JSON.parse(text) as { vote: "A" | "B" | "AB"; reasoning: string };
+    return { judgeId, ...parsed };
+  });
+
+  const results = await Promise.all(judgePromises);
+  return results;
+}
+
+/**
+ * Tally Borda count from judge votes.
+ * A=3 points, AB=2 points, B=1 point (preference for original).
+ */
+function tallyBordaCount(votes: JudgeVote[]): "A" | "B" | "AB" {
+  const scores = { A: 0, B: 0, AB: 0 };
+  const points = { A: 3, AB: 2, B: 1 };
+
+  for (const vote of votes) {
+    scores[vote.vote] += points[vote.vote];
+  }
+
+  if (scores.A >= scores.B && scores.A >= scores.AB) return "A";
+  if (scores.AB >= scores.B) return "AB";
+  return "B";
+}
+
+// ── Main Entry Point ─────────────────────────────────────────────────────────
+
+/**
+ * Run adversarial validation on flagged extractions.
+ *
+ * @param values - Extracted values with warnings from basic validation
+ * @param statementType - Type of financial statement (for constraint selection)
+ * @returns Validation result with pass/needs_review status
+ */
+export async function runAdversarialValidation(
+  values: ExtractedValueForValidation[],
+  statementType: "income" | "balance" | "cashflow" = "income"
+): Promise<AdversarialResult> {
+  // Step 1: Rule-based constraint checking (fast, no LLM)
+  const constraintViolations = checkArithmeticConstraints(values, statementType);
+
+  // If no constraint violations and all values have high confidence, pass immediately
+  const allHighConfidence = values.every(v => v.confidence >= 0.9);
+  if (constraintViolations.length === 0 && allHighConfidence) {
+    return {
+      status: "pass",
+      message: "All arithmetic constraints satisfied, high confidence",
+      constraintViolations: [],
+      judgeVotes: [],
+      roundsNeeded: 0,
+    };
+  }
+
+  // Step 2: Run critic to identify potential issues
+  let criticOutput: CriticOutput;
+  try {
+    criticOutput = await runCritic(values, constraintViolations);
+  } catch (error) {
+    return {
+      status: "error",
+      message: `Critic failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      constraintViolations,
+      judgeVotes: [],
+      roundsNeeded: 0,
+    };
+  }
+
+  // If critic says "correct" and no constraint violations, pass
+  if (criticOutput.overallAssessment === "correct" && constraintViolations.length === 0) {
+    return {
+      status: "pass",
+      message: "Critic validated extraction as correct",
+      constraintViolations: [],
+      judgeVotes: [],
+      roundsNeeded: 1,
+    };
+  }
+
+  // Step 3: Run judge panel for adversarial debate
+  let consecutiveAWins = 0;
+  let allVotes: JudgeVote[] = [];
+  let roundsNeeded = 0;
+
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    roundsNeeded++;
+
+    try {
+      const roundVotes = await runJudgePanel(values, criticOutput, constraintViolations);
+      allVotes = [...allVotes, ...roundVotes];
+
+      const winner = tallyBordaCount(roundVotes);
+
+      if (winner === "A") {
+        consecutiveAWins++;
+        if (consecutiveAWins >= CONSECUTIVE_WINS_TO_PASS) {
+          return {
+            status: "pass",
+            message: `Original extraction validated after ${roundsNeeded} round(s)`,
+            constraintViolations,
+            judgeVotes: allVotes,
+            roundsNeeded,
+          };
+        }
+      } else {
+        consecutiveAWins = 0;
+      }
+
+      // If B or AB wins, flag for review
+      if (winner === "B" || winner === "AB") {
+        return {
+          status: "needs_review",
+          message: `Judges recommend corrections (${winner} won round ${round + 1})`,
+          constraintViolations,
+          judgeVotes: allVotes,
+          roundsNeeded,
+        };
+      }
+    } catch (error) {
+      return {
+        status: "error",
+        message: `Judge panel failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        constraintViolations,
+        judgeVotes: allVotes,
+        roundsNeeded,
+      };
+    }
+  }
+
+  // Max rounds reached without convergence
+  return {
+    status: "needs_review",
+    message: "Max rounds reached without convergence",
+    constraintViolations,
+    judgeVotes: allVotes,
+    roundsNeeded,
+  };
+}
+
+/**
+ * Should adversarial validation be triggered?
+ * Returns true if any values have warnings or low confidence.
+ */
+export function shouldTriggerAdversarial(
+  values: ExtractedValueForValidation[]
+): boolean {
+  // Trigger if any warnings exist
+  const hasWarnings = values.some(v => v.validationStatus === "warning");
+
+  // Trigger if any low confidence
+  const hasLowConfidence = values.some(v => v.confidence < 0.85);
+
+  // Trigger if more than 3 values (enough data to check constraints)
+  const enoughData = values.length >= 3;
+
+  return enoughData && (hasWarnings || hasLowConfidence);
+}

@@ -1,8 +1,19 @@
 /**
  * Validation engine for extracted financial data.
- * Runs sign checks and confidence thresholds.
- * DuckDB-based totals-match validation deferred to v2.
+ *
+ * Two-phase validation:
+ * 1. Basic validation: sign checks, confidence thresholds (fast, rule-based)
+ * 2. Adversarial validation: autoreason-style debate for flagged extractions (LLM-based)
  */
+
+// Re-export adversarial validation for pipeline integration
+export {
+  runAdversarialValidation,
+  shouldTriggerAdversarial,
+  checkArithmeticConstraints,
+  type AdversarialResult,
+  type ExtractedValueForValidation,
+} from "./adversarial";
 
 export interface ValidationInput {
   id: number;
