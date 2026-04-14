@@ -399,3 +399,96 @@ The 65% aggregate is the honest ceiling without doing one of these:
 Full per-case table lives in `/tmp/eval-output-v3.md`. Corpus: CENT
 run 29, BANREGIO run 16, NTCO3 run 51 (fresh), ENELCHILE run 12.
 24 cases, 125s wall time, 36 judge votes.
+
+---
+
+## Fourth run — gated the zero-value warning on `validation_sign`
+
+The third baseline flagged CENT clean emitting `basic=warning`. Root
+cause: `engine.ts`'s `numValue === 0` check fired on `Investments` (id
+342 on run 29), a balance sheet row where zero is legitimate for
+companies with no non-current investments. Same story on ENEL: the
+low-confidence `pasivos por arrendamiento` row tripped the medium-
+confidence warning.
+
+The zero-value warning was designed to catch zero_wipe corruptions in
+production, but in the eval it contributed **zero catches** across
+all four runs and four corruption types. Every actual zero_wipe catch
+went through the adversarial layer (CENT via constraint arithmetic,
+ENEL via LLM critic). So the warning was all noise, no signal — and
+every yellow badge Camila ignores trains her to ignore real ones.
+
+Fix: gate the zero warning on `validationSign` being set. An analyst
+populating `validation_sign='positive'` is explicitly saying "this row
+must have a value"; a null `validation_sign` means the row is
+optional or unannotated. Five-line change in `engine.ts`:
+
+```ts
+if (numValue === 0 && v.validationSign) { ... return warning ... }
+```
+
+### Headline numbers
+
+| metric | 2nd | 3rd | **4th** |
+|---|---|---|---|
+| False positive rate | 0% | 0% | **0%** |
+| Sign flip | 75% | 100% | **100%** |
+| Decimal shift | 25% | 50% | **50%** |
+| Row swap | 75% | 75% | **75%** |
+| Magnitude ×1000 | 50% | 50% | **25%** |
+| Zero wipe | 25% | 50% | **25%** |
+| **Aggregate non-clean** | **50%** | **65%** | **55%** |
+| **CENT clean status** | warning | warning | **pass** ✅ |
+
+The headline win is CENT clean flipping from `warning` to `pass`. No
+more spurious yellow badge on clean CENT runs in the review UI.
+
+### The mag×1000 and zero_wipe regressions are LLM noise
+
+magnitude_1000x dropped from 50% → 25% because ENEL
+magnitude_1000x flipped from `adv=needs_review` (caught) to `adv=pass`
+(miss) between runs. zero_wipe dropped 50% → 25% for the same reason
+on ENEL zero_wipe. These cases go through the adversarial LLM critic,
+not the rule-based layer, and the critic's judgment varies ±1 case
+per run. The basic validator status is identical across v3 and v4 for
+both cases — the change in engine.ts did not affect them.
+
+Confirmed by inspection:
+
+| case | v3 basic | v3 adv | v4 basic | v4 adv |
+|---|---|---|---|---|
+| ENEL mag×1000 | warning | needs_review | warning | **pass** |
+| ENEL zero_wipe | warning | needs_review | warning | **pass** |
+
+Both basicStatus values are unchanged. The only mover is the LLM
+critic, which is non-deterministic. This is the ENEL-LLM-floor
+variance the third baseline flagged. For a more stable measurement
+we'd need to run the harness 3-5 times and average, or seed the
+critic's sampling. Out of scope here.
+
+### What actually changed in the eval
+
+- **CENT clean:** warning → pass (intended, eliminates UI noise)
+- **Everything else on CENT/BANREGIO/NTCO3:** unchanged
+- **ENEL clean:** still warning (low-confidence `pasivos por
+  arrendamiento` still trips the medium-confidence check, which is a
+  separate code path from the zero-value warning)
+
+The non-basic diffs (ENEL mag×1000 and zero_wipe) are LLM variance
+and would flip back on a re-run. If anything the 4th run's ENEL
+critic was slightly less aggressive, not the other way around.
+
+### Verdict (fourth time)
+
+- **Ship the zero-warning gate.** Fixes a real UI noise issue with
+  zero regression in eval catches (LLM variance aside).
+- **Follow-up:** add a low-effort "ENEL stability" eval that runs
+  ENEL's five cases 3× and averages, to filter out LLM critic jitter
+  from the aggregate metric. This would make future eval deltas
+  easier to read.
+
+### Fourth raw eval output
+
+Full per-case table lives in `/tmp/eval-output-v4.md`. Corpus: CENT
+run 29, BANREGIO run 16, NTCO3 run 51, ENELCHILE run 12.
+24 cases, 153s wall time, 39 judge votes.

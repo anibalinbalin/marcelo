@@ -73,8 +73,12 @@ export function runValidation(values: ValidationInput[]): ValidationResult[] {
       };
     }
 
-    // Zero value check (unusual for most financial fields)
-    if (numValue === 0) {
+    // Zero value check — only fire when the analyst has flagged the row as
+    // "must have a value" via validationSign. Without that signal, zero is
+    // legitimate for many balance sheet lines (Investments, Other receivables,
+    // etc.), and the warning was training analysts to ignore yellow badges on
+    // every clean run. See docs/eval-baseline-2026-04-14.md §3.
+    if (numValue === 0 && v.validationSign) {
       return {
         id: v.id,
         status: "warning" as const,
