@@ -176,15 +176,27 @@ export function checkArithmeticConstraints(
 
 /**
  * Run critic agent to identify potential issues.
+ *
+ * Exported for debug/introspection scripts (e.g.,
+ * scripts/debug-enel-critic.ts). Not part of the public pipeline
+ * surface — pipeline.ts should always go through
+ * runAdversarialValidation, not call this directly.
  */
-async function runCritic(
+export async function runCritic(
   values: ExtractedValueForValidation[],
   constraintViolations: ConstraintViolation[]
 ): Promise<CriticOutput> {
   const openrouter = getOpenRouter();
 
+  // Intentionally exclude confidence from the values table. Before
+  // 2026-04-14 the critic saw `(confidence: 75%)` on flagged rows and
+  // echoed "verify against source" back as a reported issue on every
+  // ENEL clean run — see scripts/debug-enel-critic.ts + the §5
+  // investigation in docs/eval-baseline-2026-04-14.md. Confidence is a
+  // gating signal for whether to run the critic at all, not a data
+  // quality flag for the critic to re-surface as an issue.
   const valuesTable = values
-    .map(v => `- ${v.sourceLabel}: ${v.extractedValue} (confidence: ${(v.confidence * 100).toFixed(0)}%)`)
+    .map(v => `- ${v.sourceLabel}: ${v.extractedValue}`)
     .join("\n");
 
   const violationsText = constraintViolations.length > 0
@@ -195,15 +207,34 @@ async function runCritic(
 
   const prompt = `You are a financial data validation critic. Review these extracted values for errors.
 
+Only flag CONCRETE errors you can verify from the data itself. Do NOT flag:
+- Values that "should be verified against source" — you cannot see the source.
+- Numbers that "seem unusual" or "might indicate" a problem without evidence.
+- Sign conventions unless an arithmetic constraint is violated (companies
+  store expenses/liabilities with different sign conventions; negative on
+  a cost line is normal for some companies).
+- Magnitude concerns unless you can tie them to a specific arithmetic
+  inconsistency (e.g., a line that is 1000× out of scale relative to
+  neighboring rows of the same quantity).
+
+If you cannot identify a concrete, verifiable error, return
+overallAssessment: correct with empty issues. A "clean" assessment is
+the correct answer for most runs.
+
 EXTRACTED VALUES:
 ${valuesTable}
 ${violationsText}
 
 Analyze for:
-1. Arithmetic consistency (do sums match totals?)
-2. Sign errors (expenses should be negative, revenues positive)
-3. Magnitude errors (values off by factor of 1000?)
-4. Label mismatches (value assigned to wrong row?)
+1. Arithmetic consistency — do term sums match stated totals (only if
+   both terms and total are present)?
+2. Sign errors — a line that breaks an arithmetic constraint because of
+   a sign flip (NOT because of your prior expectation of what sign it
+   should have).
+3. Magnitude errors — a value that is clearly off by ~1000× compared
+   to what the arithmetic requires (not what your intuition says).
+4. Label mismatches — two rows whose values are obviously swapped
+   based on their magnitude and label meaning.
 
 For each issue, populate label, currentValue, problem (one sentence),
 and optionally suggestedValue. arithmeticErrors is a list of plain-text
