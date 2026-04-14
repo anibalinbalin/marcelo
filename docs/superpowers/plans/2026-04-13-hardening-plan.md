@@ -146,6 +146,51 @@ Each corruption runs through the pipeline. Measurements:
 
 - **2026-04-13 pm:** Anibal chose ~2 weeks of focused work over shipping bug sweep as a standalone PR. Motivation: "I prefer to have a solid product for them."
 - **2026-04-13 pm:** 3 research subagents + 3 codex challenges completed before the plan was finalized. Codex corrected several subagent claims — see "What codex surfaced" above.
+- **2026-04-13 night:** W1.1 bug sweep shipped (`8df591a`). W1.2 review UI shipped (`01322b8`). W1.3 eval harness shipped + baseline captured — see next section. Plan reshuffled based on baseline findings.
+
+---
+
+## Baseline findings (2026-04-13 night) — reshuffle
+
+Full baseline: `docs/eval-baseline-2026-04-13.md`. Key results from 24 cases (4 runs × 6 corruptions):
+
+- **False positive rate: 25%** — CENT clean run flagged as `needs_review` by the arithmetic check, not the LLM. Our `operating_income` and `net_income` constraints assume a flat IS layout. CENT has 5+ expense lines, so the sum undershoots. Absolute tolerance=1 is also way too tight for values in thousands/millions.
+- **Half the corpus never enters the adversarial path at all.** REGIONAL and NTCO3 have `confidence=1.0` on every row and no warnings, so `shouldTriggerAdversarial` returns false. The validator is dead code for healthy companies.
+- **When the validator DOES run, catch rate is very high:** 100% on sign flip, decimal shift, row swap. 50% on magnitude ×1000 and zero wipe (the 50% misses correlate with JSON parse errors, not logic failures).
+- **12.5% error rate** — 3/24 cases crashed when the critic returned non-JSON the manual parser couldn't extract.
+
+### Revised priority
+
+The ceiling on validator usefulness is NOT adversarial fidelity (W3.1). It's three upstream issues:
+
+1. **W1.4 (new): trigger gate rework** — always run rule-based `checkArithmeticConstraints` on every extraction; only fall through to LLM path on violations.
+2. **W1.5 (new): critic JSON robustness** — swap `generateText` + manual parse for `generateObject` with a Zod schema, or add retry-with-repair.
+3. **W1.6 (new): percentage-based constraint tolerances** — `operating_income ± 0.5% of result` instead of `± 1 absolute`. Eliminate the CENT false positive.
+
+**W3.1 is deprioritized.** Re-baseline after W1.4-W1.6 ship. If catch rates are still below 80% on the new baseline, revisit Author-B / Synthesizer. If they're above 90%, skip W3.1 entirely.
+
+### Updated execution order
+
+**Week 1 — make the ground true** (mostly done)
+
+1. ✅ W1.1 Bug sweep — `8df591a`
+2. ✅ W1.2 Review UI explanations — `01322b8`
+3. ✅ W1.3 Eval harness + baseline
+4. **W1.4 Trigger gate rework** (half day, new)
+5. **W1.5 Critic JSON robustness** (half day, new)
+6. **W1.6 Constraint tolerances** (half day, new)
+7. Re-run eval harness → capture `docs/eval-baseline-2026-04-14.md`, compare
+
+**Week 2 — real learning loop** (unchanged)
+
+8. W2.1 Schema migration
+9. W2.2 Record vs promote split
+10. W2.3 Promotion pipeline
+
+**Week 3 — conditional on fresh baseline**
+
+11. W3.1 Adversarial fidelity upgrade (likely skipped if W1.4-W1.6 bring catch rate > 90%)
+12. W3.2 Lint pass on learning tables
 
 ---
 
