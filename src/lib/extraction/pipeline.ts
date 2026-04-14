@@ -9,8 +9,8 @@
  *   - Vision-based (image-heavy PDFs → render pages → Claude vision OCR)
  */
 import { getDb } from "@/db";
-import { fieldMappings, extractionRuns, extractedValues } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { fieldMappings, extractionRuns, extractedValues, conceptAliases } from "@/db/schema";
+import { eq, and, inArray } from "drizzle-orm";
 import { extractPdfTables, type PdfSection } from "@/lib/pdf/extract";
 import { extractPdfText, type ParsedLine } from "@/lib/pdf/extract-text";
 import { extractPdfVision } from "@/lib/pdf/extract-vision";
@@ -728,6 +728,25 @@ export async function runExtractionPipeline(runId: number): Promise<ExtractionRe
     throw new Error(`No active mappings for company ${run.companyId}`);
   }
 
+  // 2b. Load concept aliases so the matcher can try alternative wordings
+  // (e.g. ENEL writes "PATRIMONIO TOTAL" but the analyst mapping uses
+  // "Total de patrimonio"). Aliases are per-concept, so we batch-query once.
+  const conceptIds = [...new Set(
+    mappings.map((m) => m.conceptId).filter((c): c is number => c != null)
+  )];
+  const aliasRows = conceptIds.length > 0
+    ? await db
+        .select({ conceptId: conceptAliases.conceptId, aliasText: conceptAliases.aliasText })
+        .from(conceptAliases)
+        .where(inArray(conceptAliases.conceptId, conceptIds))
+    : [];
+  const aliasesByConcept = new Map<number, string[]>();
+  for (const row of aliasRows) {
+    const list = aliasesByConcept.get(row.conceptId) ?? [];
+    list.push(row.aliasText);
+    aliasesByConcept.set(row.conceptId, list);
+  }
+
   // 3. Download source file
   const response = await fetch(run.sourceFileUrl);
   if (!response.ok) {
@@ -820,9 +839,27 @@ export async function runExtractionPipeline(runId: number): Promise<ExtractionRe
       ? (parseInt(mapping.sourceCol, 10) || null)
       : null;
 
-    const match = isIfrsText
-      ? findValueInText(textLines, mapping.sourceLabel, colIndex, pageRange)
-      : findValueInSection(sections, mapping.sourceSection, mapping.sourceLabel, visionColOverride);
+    // For IFRS text, try the mapping's source label plus every alias linked
+    // to its concept, and keep the best-confidence match. This unlocks
+    // cross-company wording variants without touching the source_label
+    // Camila sees in the review UI.
+    let match: { value: number; confidence: number } | null = null;
+    if (isIfrsText) {
+      const candidates = [mapping.sourceLabel];
+      if (mapping.conceptId != null) {
+        const aliases = aliasesByConcept.get(mapping.conceptId) ?? [];
+        for (const a of aliases) {
+          if (a && !candidates.includes(a)) candidates.push(a);
+        }
+      }
+      for (const candidate of candidates) {
+        const m = findValueInText(textLines, candidate, colIndex, pageRange);
+        if (m && (!match || m.confidence > match.confidence)) match = m;
+        if (match && match.confidence >= 1.0) break;
+      }
+    } else {
+      match = findValueInSection(sections, mapping.sourceSection, mapping.sourceLabel, visionColOverride);
+    }
 
     if (!match) {
       errors.push(
