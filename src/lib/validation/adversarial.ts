@@ -125,7 +125,17 @@ export function checkArithmeticConstraints(
       if (match) {
         const numValue = parseFloat(match.extractedValue);
         if (!isNaN(numValue)) {
-          sum += numValue * term.coefficient;
+          // flow encodes accounting semantics so we don't depend on the
+          // source's sign convention (CENT stores costs negative, other
+          // companies store them positive; both should satisfy the same
+          // constraint definition).
+          const contribution =
+            term.flow === "inflow"
+              ? Math.abs(numValue)
+              : term.flow === "outflow"
+              ? -Math.abs(numValue)
+              : numValue;
+          sum += contribution;
           termsFound++;
         }
       }

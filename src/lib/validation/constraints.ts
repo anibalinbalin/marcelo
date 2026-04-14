@@ -3,11 +3,25 @@
  * Defines relationships between extracted values that must hold true.
  */
 
+/**
+ * Sign discipline for a term. Encodes the accounting flow, not the
+ * extraction storage convention, so a constraint works regardless of
+ * whether the source stores costs as positive magnitudes or as negative
+ * signed numbers.
+ *
+ * - "inflow"  → always contributes +|value| (e.g., revenue, cash inflow)
+ * - "outflow" → always contributes -|value| (e.g., cost of sales, tax)
+ * - "signed"  → contributes the extracted value as-is (for items that can
+ *               be naturally positive or negative, e.g., investing CF,
+ *               "other operating income, net")
+ */
+export type TermFlow = "inflow" | "outflow" | "signed";
+
 export interface ConstraintTerm {
   /** Pipe-separated label alternatives (e.g., "Revenue|Ingresos|Receita") */
   labels: string;
-  /** Coefficient: 1 for addends, -1 for subtractands */
-  coefficient: number;
+  /** Sign discipline for this term. */
+  flow: TermFlow;
 }
 
 export interface ArithmeticConstraint {
@@ -43,10 +57,13 @@ export const MIN_TOLERANCE_ABSOLUTE = 1;
 export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
   {
     name: "gross_profit",
-    description: "Gross Profit = Revenue - Cost of Sales",
+    description: "Gross Profit = Net Revenue - Cost of Sales",
     terms: [
-      { labels: "Revenue|Ingresos|Receita|Net Revenue|Receita Líquida", coefficient: 1 },
-      { labels: "Cost of Sales|Costo de Ventas|Custo|COGS", coefficient: -1 },
+      // Put "Net Revenue" before "Revenue" so label matching prefers the
+      // specific line when both exist (CENT has both Gross revenue and
+      // Net revenue; only Net revenue - COGS equals Gross profit).
+      { labels: "Net Revenue|Receita Líquida|Revenue|Ingresos|Receita", flow: "inflow" },
+      { labels: "Cost of Sales|Costo de Ventas|Custo|COGS", flow: "outflow" },
     ],
     resultLabel: "Gross Profit|Utilidad Bruta|Lucro Bruto",
     toleranceFraction: 0.01,
@@ -55,8 +72,8 @@ export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
     name: "operating_income",
     description: "Operating Income = Gross Profit - Operating Expenses",
     terms: [
-      { labels: "Gross Profit|Utilidad Bruta|Lucro Bruto", coefficient: 1 },
-      { labels: "Operating Expenses|Gastos de Operación|SG&A|Gastos Operativos", coefficient: -1 },
+      { labels: "Gross Profit|Utilidad Bruta|Lucro Bruto", flow: "inflow" },
+      { labels: "Operating Expenses|Gastos de Operación|SG&A|Gastos Operativos", flow: "outflow" },
     ],
     resultLabel: "Operating Income|EBIT|Utilidad de Operación|Lucro Operacional",
     toleranceFraction: 0.01,
@@ -65,9 +82,9 @@ export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
     name: "net_income",
     description: "Net Income = Operating Income - Interest - Tax",
     terms: [
-      { labels: "Operating Income|EBIT|Utilidad de Operación|Lucro Operacional", coefficient: 1 },
-      { labels: "Interest Expense|Gastos Financieros|Despesas Financeiras", coefficient: -1 },
-      { labels: "Income Tax|Impuestos|Impostos", coefficient: -1 },
+      { labels: "Operating Income|EBIT|Utilidad de Operación|Lucro Operacional", flow: "inflow" },
+      { labels: "Interest Expense|Gastos Financieros|Despesas Financeiras", flow: "outflow" },
+      { labels: "Income Tax|Impuestos|Impostos", flow: "outflow" },
     ],
     resultLabel: "Net Income|Utilidad Neta|Lucro Líquido",
     toleranceFraction: 0.01,
@@ -86,9 +103,9 @@ export const CASHFLOW_CONSTRAINTS: ArithmeticConstraint[] = [
     name: "net_change_in_cash",
     description: "Net Change in Cash = Operating CF + Investing CF + Financing CF",
     terms: [
-      { labels: "Operating Activities|Actividades de Operación|Atividades Operacionais|Cash from Operations|Flujo de Operación|Cash Flow from Operating", coefficient: 1 },
-      { labels: "Investing Activities|Actividades de Inversión|Atividades de Investimento|Cash from Investing|Flujo de Inversión", coefficient: 1 },
-      { labels: "Financing Activities|Actividades de Financiamiento|Atividades de Financiamento|Cash from Financing|Flujo de Financiamiento", coefficient: 1 },
+      { labels: "Operating Activities|Actividades de Operación|Atividades Operacionais|Cash from Operations|Flujo de Operación|Cash Flow from Operating", flow: "signed" },
+      { labels: "Investing Activities|Actividades de Inversión|Atividades de Investimento|Cash from Investing|Flujo de Inversión", flow: "signed" },
+      { labels: "Financing Activities|Actividades de Financiamiento|Atividades de Financiamento|Cash from Financing|Flujo de Financiamiento", flow: "signed" },
     ],
     resultLabel: "Net Change in Cash|Variación Neta de Efectivo|Variação do Caixa|Net Increase in Cash|Aumento Neto en Efectivo",
     toleranceFraction: 0.01,
@@ -103,8 +120,8 @@ export const BALANCE_SHEET_CONSTRAINTS: ArithmeticConstraint[] = [
     name: "balance_equation",
     description: "Total Assets = Total Liabilities + Total Equity",
     terms: [
-      { labels: "Total Liabilities|Pasivo Total|Passivo Total", coefficient: 1 },
-      { labels: "Total Equity|Capital Contable|Patrimônio|Patrimonio Neto", coefficient: 1 },
+      { labels: "Total Liabilities|Pasivo Total|Passivo Total", flow: "signed" },
+      { labels: "Total Equity|Capital Contable|Patrimônio|Patrimonio Neto", flow: "signed" },
     ],
     resultLabel: "Total Assets|Activo Total|Ativo Total",
     toleranceFraction: 0.01,
@@ -113,8 +130,8 @@ export const BALANCE_SHEET_CONSTRAINTS: ArithmeticConstraint[] = [
     name: "current_assets",
     description: "Total Assets = Current + Non-Current",
     terms: [
-      { labels: "Current Assets|Activo Circulante|Ativo Circulante", coefficient: 1 },
-      { labels: "Non-Current Assets|Activo No Circulante|Ativo Não Circulante", coefficient: 1 },
+      { labels: "Current Assets|Activo Circulante|Ativo Circulante", flow: "signed" },
+      { labels: "Non-Current Assets|Activo No Circulante|Ativo Não Circulante", flow: "signed" },
     ],
     resultLabel: "Total Assets|Activo Total|Ativo Total",
     toleranceFraction: 0.01,
@@ -140,12 +157,32 @@ export function getConstraintsForStatement(
 }
 
 /**
- * Check if a label matches a pattern (supports pipe-separated alternatives).
+ * Check if a label matches a pattern (pipe-separated alternatives).
+ *
+ * Uses prefix matching, not substring matching. Before W1.7 this was
+ * `normalizedLabel.includes(alt)`, which produced three distinct false
+ * positives on CENT:
+ *
+ * - "Other operating income, net" matched the Operating Income alternative
+ *   (substring: "other **operating income**, net")
+ * - "Income before income taxes" matched the Income Tax alternative
+ *   (substring: "income before **income tax**es")
+ * - "Gross revenue" matched the Revenue alternative before "Net revenue"
+ *   did, and only Net revenue - COGS equals gross profit
+ *
+ * Prefix matching fixes all three: a label matches an alternative only
+ * when the normalized label starts with the alternative. Pluralization
+ * still works ("revenues" starts with "revenue"), and punctuation or
+ * suffixes like "(ex-IFRS16)" are naturally ignored.
+ *
+ * Ordering of alternatives matters: the first matching alternative wins,
+ * so constraint authors should put the more specific alternative first
+ * (e.g., "Net Revenue" before "Revenue").
  */
 export function labelMatches(label: string, pattern: string): boolean {
   const alternatives = pattern.split("|");
   const normalizedLabel = label.toLowerCase().trim();
   return alternatives.some(alt =>
-    normalizedLabel.includes(alt.toLowerCase().trim())
+    normalizedLabel.startsWith(alt.toLowerCase().trim())
   );
 }
