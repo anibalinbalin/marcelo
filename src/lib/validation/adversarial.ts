@@ -12,12 +12,37 @@
  * validation passes. If corrections (B/AB) win, we flag for analyst review.
  */
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText } from "ai";
+import { generateText, Output } from "ai";
+import { z } from "zod";
 import {
   getConstraintsForStatement,
   labelMatches,
   MIN_TOLERANCE_ABSOLUTE,
 } from "./constraints";
+
+// ── Schemas for structured LLM output ────────────────────────────────────────
+// generateText with Output.object + Zod gives us guaranteed JSON shape.
+// The previous manual JSON.parse approach crashed on ~12.5% of runs in
+// the first eval baseline (docs/eval-baseline-2026-04-13.md) when the
+// model returned prose-wrapped JSON.
+
+const CriticOutputSchema = z.object({
+  issues: z.array(
+    z.object({
+      label: z.string(),
+      currentValue: z.string(),
+      problem: z.string(),
+      suggestedValue: z.string().optional(),
+    })
+  ),
+  arithmeticErrors: z.array(z.string()),
+  overallAssessment: z.enum(["correct", "minor_issues", "major_issues"]),
+});
+
+const JudgeVoteSchema = z.object({
+  vote: z.enum(["A", "B", "AB"]),
+  reasoning: z.string(),
+});
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -170,24 +195,18 @@ Analyze for:
 3. Magnitude errors (values off by factor of 1000?)
 4. Label mismatches (value assigned to wrong row?)
 
-Return JSON only:
-{
-  "issues": [{"label": "...", "currentValue": "...", "problem": "...", "suggestedValue": "..."}],
-  "arithmeticErrors": ["description of error..."],
-  "overallAssessment": "correct" | "minor_issues" | "major_issues"
-}`;
+For each issue, populate label, currentValue, problem (one sentence),
+and optionally suggestedValue. arithmeticErrors is a list of plain-text
+descriptions of any sum/total mismatches you spot. overallAssessment is
+correct, minor_issues, or major_issues.`;
 
   const result = await generateText({
     model: openrouter("anthropic/claude-haiku-4.5"),
+    output: Output.object({ schema: CriticOutputSchema }),
     messages: [{ role: "user", content: prompt }],
   });
 
-  let text = result.text.trim();
-  if (text.startsWith("```")) {
-    text = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-  }
-
-  return JSON.parse(text) as CriticOutput;
+  return result.output;
 }
 
 /**
@@ -227,24 +246,18 @@ Vote for the most accurate version:
 - B: Critic's corrections are needed
 - AB: Partial corrections needed (some critic suggestions valid, some not)
 
-Return JSON only:
-{"vote": "A" | "B" | "AB", "reasoning": "one sentence explanation"}`;
+Provide a one-sentence reasoning.`;
 
   // Run 3 judges in parallel
   const judgePromises = [1, 2, 3].map(async (judgeId) => {
     const result = await generateText({
       model: openrouter("anthropic/claude-haiku-4.5"),
+      output: Output.object({ schema: JudgeVoteSchema }),
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3 + judgeId * 0.1, // Slight variation for diversity
     });
 
-    let text = result.text.trim();
-    if (text.startsWith("```")) {
-      text = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-    }
-
-    const parsed = JSON.parse(text) as { vote: "A" | "B" | "AB"; reasoning: string };
-    return { judgeId, ...parsed };
+    return { judgeId, ...result.output };
   });
 
   const results = await Promise.all(judgePromises);
