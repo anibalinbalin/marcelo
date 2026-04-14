@@ -50,31 +50,52 @@ function ConfidenceDot({ confidence }: { confidence: number }) {
   );
 }
 
-function StatusBadge({ status }: { status: string | null }) {
-  if (!status) return <Badge variant="secondary">--</Badge>;
+function StatusCell({
+  status,
+  message,
+}: {
+  status: string | null;
+  message: string | null;
+}) {
+  const badge = (() => {
+    if (!status) return <Badge variant="secondary">--</Badge>;
+    switch (status) {
+      case "pass":
+        return (
+          <Badge className="bg-success/15 text-success border-success/25">
+            pass
+          </Badge>
+        );
+      case "warning":
+        return (
+          <Badge className="bg-warning/15 text-warning border-warning/25">
+            warning
+          </Badge>
+        );
+      case "fail":
+        return (
+          <Badge className="bg-destructive/15 text-destructive border-destructive/25">
+            fail
+          </Badge>
+        );
+      default:
+        return <Badge variant="secondary">{status}</Badge>;
+    }
+  })();
 
-  switch (status) {
-    case "pass":
-      return (
-        <Badge className="bg-success/15 text-success border-success/25">
-          pass
-        </Badge>
-      );
-    case "warning":
-      return (
-        <Badge className="bg-warning/15 text-warning border-warning/25">
-          warning
-        </Badge>
-      );
-    case "fail":
-      return (
-        <Badge className="bg-destructive/15 text-destructive border-destructive/25">
-          fail
-        </Badge>
-      );
-    default:
-      return <Badge variant="secondary">{status}</Badge>;
-  }
+  const showMessage =
+    message && (status === "warning" || status === "fail");
+
+  return (
+    <div className="flex flex-col gap-1">
+      {badge}
+      {showMessage && (
+        <span className="max-w-[220px] text-[11px] leading-tight text-muted-foreground">
+          {message}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function OverrideCell({
@@ -173,8 +194,11 @@ export function ReviewTable({
             <TableCell>
               <ConfidenceDot confidence={v.confidence} />
             </TableCell>
-            <TableCell>
-              <StatusBadge status={v.validationStatus} />
+            <TableCell className="align-top">
+              <StatusCell
+                status={v.validationStatus}
+                message={v.validationMessage}
+              />
             </TableCell>
             <TableCell>
               <OverrideCell

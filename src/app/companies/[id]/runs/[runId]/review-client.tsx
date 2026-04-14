@@ -344,6 +344,16 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
                 </Button>
               </div>
 
+              {/* Inline help when there are flagged rows */}
+              {warningCount + failCount > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Rows flagged below failed an automated sanity check. The
+                  reason appears under the status. Click the value to override
+                  it with what the source document shows, or approve as-is if
+                  the extracted value is correct.
+                </p>
+              )}
+
               {/* Tabs by sheet */}
               <Tabs defaultValue={sheetNames[0]} className="w-full">
                 <TabsList variant="line" className="mb-4">
