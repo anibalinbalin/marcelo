@@ -50,6 +50,13 @@ function ConfidenceDot({ confidence }: { confidence: number }) {
   );
 }
 
+const FLAGGED_STATUSES = new Set([
+  "warning",
+  "fail",
+  "needs_review",
+  "error",
+]);
+
 function StatusCell({
   status,
   message,
@@ -72,10 +79,22 @@ function StatusCell({
             warning
           </Badge>
         );
+      case "needs_review":
+        return (
+          <Badge className="bg-warning/15 text-warning border-warning/25">
+            needs review
+          </Badge>
+        );
       case "fail":
         return (
           <Badge className="bg-destructive/15 text-destructive border-destructive/25">
             fail
+          </Badge>
+        );
+      case "error":
+        return (
+          <Badge className="bg-destructive/15 text-destructive border-destructive/25">
+            error
           </Badge>
         );
       default:
@@ -83,8 +102,7 @@ function StatusCell({
     }
   })();
 
-  const showMessage =
-    message && (status === "warning" || status === "fail");
+  const showMessage = message && status && FLAGGED_STATUSES.has(status);
 
   return (
     <div className="flex flex-col gap-1">
@@ -153,7 +171,7 @@ export function ReviewTable({
 }: ReviewTableProps) {
   const filtered = showFlaggedOnly
     ? values.filter(
-        (v) => v.validationStatus === "warning" || v.validationStatus === "fail"
+        (v) => v.validationStatus && FLAGGED_STATUSES.has(v.validationStatus)
       )
     : values;
 
