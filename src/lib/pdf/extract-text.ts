@@ -57,7 +57,6 @@ def parse_number(s):
         neg = True
         s = s[1:]
     # ALL dots are thousands separators in Chilean MUS$ statements
-    # "665.902" = 665,902 (3 digits after dot = thousands separator)
     parts_by_dot = s.split('.')
     if len(parts_by_dot) > 1 and all(len(p) == 3 or i == 0 for i, p in enumerate(parts_by_dot) if i > 0):
         s = s.replace('.', '')
@@ -76,17 +75,39 @@ with pdfplumber.open(pdf_path) as pdf:
         text = page.extract_text() or ''
         for line in text.split('\\n'):
             line = line.strip()
-            if not line or len(line) < 3: continue
-            parts = re.split(r'\\s{2,}', line)
-            if len(parts) < 2: continue
-            label = parts[0].strip()
-            if not label or len(label) < 3: continue
-            if re.match(r'^(nota\\b|note\\b|página|page\\b|\\d{1,2}[./])', label, re.I): continue
-            values = []
-            for p in parts[1:]:
-                n = parse_number(p.strip())
-                if n is not None:
-                    values.append(n)
+            if not line or len(line) < 5: continue
+            if re.match(r'^(nota\\b|note\\b|página|page\\b|\\d{1,2}[./])', line, re.I): continue
+            # Tokenize on any whitespace, walk from the end collecting numeric
+            # tokens. Stops at the first non-numeric token — that's the label
+            # boundary. Handles both single- and multi-space column layouts.
+            tokens = line.split()
+            values_rev, raws_rev, stop_idx = [], [], 0
+            for i in range(len(tokens) - 1, -1, -1):
+                n = parse_number(tokens[i])
+                if n is None:
+                    stop_idx = i + 1
+                    break
+                values_rev.append(n)
+                raws_rev.append(tokens[i])
+                stop_idx = i
+            values = list(reversed(values_rev))
+            raws = list(reversed(raws_rev))
+            label = ' '.join(tokens[:stop_idx]).strip()
+            if not values or not label or len(label) < 3: continue
+            # pdfplumber sometimes splits a leading capital from its word on
+            # small-cap / kerned headings (e.g. "M argen de Contribución").
+            # Rejoin: single capital followed by space + lowercase word.
+            label = re.sub(r'\\b([A-ZÁÉÍÓÚÑ])\\s(?=[a-záéíóúñ])', r'\\1', label)
+            # Note-ref heuristic: Chilean IFRS MUS$ statements have note-ref
+            # columns containing small bare ints (e.g. "20", "24") next to
+            # dotted thousands values (e.g. "129.594"). If values[0] is a
+            # bare small int and the rest are dotted, drop it as a note ref
+            # and fold it into the label for stripNoteRef downstream.
+            if len(values) >= 2 and '.' not in raws[0] and abs(values[0]) < 100:
+                dotted_rest = sum(1 for r in raws[1:] if '.' in r)
+                if dotted_rest >= len(raws) - 2:
+                    label = (label + ' ' + raws[0]).strip()
+                    values = values[1:]
             if values:
                 results.append({'label': label, 'values': values, 'page': page_num})
 
@@ -170,29 +191,46 @@ function parseTextLines(text: string, pageNum: number = 1): ParsedLine[] {
   const lines = text.split("\n");
   const results: ParsedLine[] = [];
 
-  // Pattern: numbers in IFRS format — e.g., "3.372.610", "(2.157.881)", "39.774", "-"
-  // Negative lookahead (?![a-z]) prevents matching "6." from note refs like "6.d)"
-  const numberPattern = /(?:\([\d.]+\)|(?<!\w)-?[\d.]+(?![a-z])(?:,\d+)?)/gi;
-
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line || line.length < 5) continue;
     if (/^(nota\b|note\b|página|page\b|\d{1,2}[\./])/i.test(line)) continue;
 
-    const matches = [...line.matchAll(numberPattern)];
-    if (matches.length === 0) continue;
+    // Tokenize on whitespace, walk from the end collecting numeric tokens.
+    // Stops at the first non-numeric token — that's the label boundary.
+    // Handles both single- and multi-space column layouts.
+    const tokens = line.split(/\s+/);
+    const valuesRev: number[] = [];
+    const rawsRev: string[] = [];
+    let stopIdx = 0;
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const n = parseNumber(tokens[i]);
+      if (n === null) {
+        stopIdx = i + 1;
+        break;
+      }
+      valuesRev.push(n);
+      rawsRev.push(tokens[i]);
+      stopIdx = i;
+    }
+    const values = valuesRev.reverse();
+    const raws = rawsRev.reverse();
+    let label = tokens.slice(0, stopIdx).join(" ").trim();
+    if (!values.length || !label || label.length < 3) continue;
 
-    const firstMatchIdx = matches[0].index!;
-    let label = line.substring(0, firstMatchIdx).trim();
-    if (!label || label.length < 3) continue;
+    // pdfplumber sometimes splits a leading capital from its word on
+    // small-cap / kerned headings (e.g. "M argen de Contribución"). Rejoin.
+    label = label.replace(/\b([A-ZÁÉÍÓÚÑ])\s(?=[a-záéíóúñ])/g, "$1");
 
-    label = label.replace(/\s+\d{1,3}$/, "").trim();
-    if (!label) continue;
-
-    const values: number[] = [];
-    for (const m of matches) {
-      const num = parseNumber(m[0]);
-      if (num !== null) values.push(num);
+    // Note-ref heuristic: Chilean IFRS MUS$ statements have a note-ref column
+    // with small bare ints next to dotted thousands values. If values[0] is
+    // a bare small int and the rest are dotted, drop it and fold into label.
+    if (values.length >= 2 && !raws[0].includes(".") && Math.abs(values[0]) < 100) {
+      const dottedRest = raws.slice(1).filter((r) => r.includes(".")).length;
+      if (dottedRest >= raws.length - 2) {
+        label = (label + " " + raws[0]).trim();
+        values.shift();
+      }
     }
 
     if (values.length > 0) {
