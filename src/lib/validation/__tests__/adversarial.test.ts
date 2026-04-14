@@ -83,6 +83,19 @@ describe("shouldTriggerAdversarial", () => {
     expect(shouldTriggerAdversarial(values)).toBe(false);
   });
 
+  it("triggers on constraint violation even with clean basic status", () => {
+    // Gross profit should be 600 but is 500 — a 100-unit arithmetic gap.
+    // All rows are high-confidence and pass basic validation, but the
+    // rule-based check fires and should drag this into the adversarial path.
+    const values: ExtractedValueForValidation[] = [
+      { id: 1, sourceLabel: "Revenue", extractedValue: "1000", confidence: 1.0, validationStatus: "pass", validationMessage: null },
+      { id: 2, sourceLabel: "Cost of Sales", extractedValue: "400", confidence: 1.0, validationStatus: "pass", validationMessage: null },
+      { id: 3, sourceLabel: "Gross Profit", extractedValue: "500", confidence: 1.0, validationStatus: "pass", validationMessage: null },
+    ];
+
+    expect(shouldTriggerAdversarial(values, "income")).toBe(true);
+  });
+
   it("does not trigger with too few values", () => {
     const values: ExtractedValueForValidation[] = [
       { id: 1, sourceLabel: "Revenue", extractedValue: "1000", confidence: 0.5, validationStatus: "warning", validationMessage: "Low confidence" },

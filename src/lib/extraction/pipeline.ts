@@ -92,17 +92,19 @@ async function maybeRunAdversarialValidation(
     };
   });
 
-  // Check if adversarial validation should run
-  if (!shouldTriggerAdversarial(adversarialInputs)) {
-    return { triggered: false };
-  }
-
-  // Determine statement type from target sheet
+  // Determine statement type from target sheet so the gate can run
+  // constraint checks against the right constraint set.
   const targetSheet = mappings[0]?.targetSheet?.toLowerCase() ?? "";
   const statementType: "income" | "balance" | "cashflow" =
     targetSheet.includes("is") || targetSheet.includes("income") ? "income" :
     targetSheet.includes("bs") || targetSheet.includes("balance") ? "balance" :
     "income"; // default to income statement constraints
+
+  // Check if adversarial validation should run (now includes rule-based
+  // constraint violations, not just warnings/low-confidence).
+  if (!shouldTriggerAdversarial(adversarialInputs, statementType)) {
+    return { triggered: false };
+  }
 
   // Run adversarial validation
   const result = await runAdversarialValidation(adversarialInputs, statementType);

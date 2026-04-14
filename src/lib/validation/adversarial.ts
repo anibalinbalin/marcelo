@@ -397,19 +397,28 @@ export async function runAdversarialValidation(
 
 /**
  * Should adversarial validation be triggered?
- * Returns true if any values have warnings or low confidence.
+ *
+ * Always runs the rule-based arithmetic constraint check first (it's free —
+ * no LLM). If any constraint is violated, trigger regardless of basic
+ * validation status. Otherwise fall back to the warning/low-confidence
+ * gate so the LLM path doesn't run on clean healthy extractions.
+ *
+ * Before W1.4 this function only looked at warnings/confidence, which meant
+ * clean healthy runs (REGIONAL, NTCO3 — all rows confidence=1.0, no
+ * warnings) never entered the adversarial path even when corrupted. See
+ * docs/eval-baseline-2026-04-13.md for the baseline that motivated this.
  */
 export function shouldTriggerAdversarial(
-  values: ExtractedValueForValidation[]
+  values: ExtractedValueForValidation[],
+  statementType: "income" | "balance" | "cashflow" = "income"
 ): boolean {
-  // Trigger if any warnings exist
-  const hasWarnings = values.some(v => v.validationStatus === "warning");
+  if (values.length < 3) return false;
 
-  // Trigger if any low confidence
+  const violations = checkArithmeticConstraints(values, statementType);
+  if (violations.length > 0) return true;
+
+  const hasWarnings = values.some(v => v.validationStatus === "warning");
   const hasLowConfidence = values.some(v => v.confidence < 0.85);
 
-  // Trigger if more than 3 values (enough data to check constraints)
-  const enoughData = values.length >= 3;
-
-  return enoughData && (hasWarnings || hasLowConfidence);
+  return hasWarnings || hasLowConfidence;
 }
