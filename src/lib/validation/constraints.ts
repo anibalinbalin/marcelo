@@ -17,9 +17,24 @@ export interface ArithmeticConstraint {
   terms: ConstraintTerm[];
   /** Label alternatives for the result (pipe-separated) */
   resultLabel: string;
-  /** Tolerance for floating point comparison (absolute, in source units) */
-  tolerance: number;
+  /**
+   * Allowed divergence as a fraction of max(|sum|, |result|). For example,
+   * 0.01 allows a 1% discrepancy. Absolute floor is MIN_TOLERANCE_ABSOLUTE
+   * so near-zero values don't trip on floating-point noise.
+   *
+   * Why fraction, not absolute: IS layouts with many expense lines (CENT
+   * has 5+) produce a ~0.5-1% gap between sum-of-expenses and
+   * operating_income due to categories we don't enumerate. Absolute=1 was
+   * false-positiving at a 25% rate on clean runs — see
+   * docs/eval-baseline-2026-04-13.md.
+   */
+  toleranceFraction: number;
 }
+
+/** Floor tolerance for values close to zero, so 0.0 ± floating-point noise
+ * doesn't trigger a violation. In source units (e.g., thousands or millions
+ * depending on company normalization). */
+export const MIN_TOLERANCE_ABSOLUTE = 1;
 
 /**
  * Income Statement constraints.
@@ -34,7 +49,7 @@ export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
       { labels: "Cost of Sales|Costo de Ventas|Custo|COGS", coefficient: -1 },
     ],
     resultLabel: "Gross Profit|Utilidad Bruta|Lucro Bruto",
-    tolerance: 1,
+    toleranceFraction: 0.01,
   },
   {
     name: "operating_income",
@@ -44,7 +59,7 @@ export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
       { labels: "Operating Expenses|Gastos de Operación|SG&A|Gastos Operativos", coefficient: -1 },
     ],
     resultLabel: "Operating Income|EBIT|Utilidad de Operación|Lucro Operacional",
-    tolerance: 1,
+    toleranceFraction: 0.01,
   },
   {
     name: "net_income",
@@ -55,7 +70,7 @@ export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
       { labels: "Income Tax|Impuestos|Impostos", coefficient: -1 },
     ],
     resultLabel: "Net Income|Utilidad Neta|Lucro Líquido",
-    tolerance: 1,
+    toleranceFraction: 0.01,
   },
 ];
 
@@ -76,7 +91,7 @@ export const CASHFLOW_CONSTRAINTS: ArithmeticConstraint[] = [
       { labels: "Financing Activities|Actividades de Financiamiento|Atividades de Financiamento|Cash from Financing|Flujo de Financiamiento", coefficient: 1 },
     ],
     resultLabel: "Net Change in Cash|Variación Neta de Efectivo|Variação do Caixa|Net Increase in Cash|Aumento Neto en Efectivo",
-    tolerance: 1,
+    toleranceFraction: 0.01,
   },
 ];
 
@@ -92,7 +107,7 @@ export const BALANCE_SHEET_CONSTRAINTS: ArithmeticConstraint[] = [
       { labels: "Total Equity|Capital Contable|Patrimônio|Patrimonio Neto", coefficient: 1 },
     ],
     resultLabel: "Total Assets|Activo Total|Ativo Total",
-    tolerance: 1,
+    toleranceFraction: 0.01,
   },
   {
     name: "current_assets",
@@ -102,7 +117,7 @@ export const BALANCE_SHEET_CONSTRAINTS: ArithmeticConstraint[] = [
       { labels: "Non-Current Assets|Activo No Circulante|Ativo Não Circulante", coefficient: 1 },
     ],
     resultLabel: "Total Assets|Activo Total|Ativo Total",
-    tolerance: 1,
+    toleranceFraction: 0.01,
   },
 ];
 

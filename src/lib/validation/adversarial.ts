@@ -16,6 +16,7 @@ import { generateText } from "ai";
 import {
   getConstraintsForStatement,
   labelMatches,
+  MIN_TOLERANCE_ABSOLUTE,
 } from "./constraints";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -113,13 +114,22 @@ export function checkArithmeticConstraints(
     if (isNaN(resultValue)) continue;
 
     const difference = Math.abs(sum - resultValue);
-    if (difference > constraint.tolerance) {
+    // Percentage-based tolerance with an absolute floor — see
+    // ArithmeticConstraint.toleranceFraction docs. Prevents both
+    // "1 unit absolute on a 3M revenue" false positives and "1% of 0"
+    // divide-by-noise false negatives.
+    const scale = Math.max(Math.abs(sum), Math.abs(resultValue));
+    const threshold = Math.max(
+      constraint.toleranceFraction * scale,
+      MIN_TOLERANCE_ABSOLUTE,
+    );
+    if (difference > threshold) {
       violations.push({
         constraintName: constraint.name,
         expected: sum,
         actual: resultValue,
         difference,
-        severity: difference > constraint.tolerance * 10 ? "error" : "warning",
+        severity: difference > threshold * 10 ? "error" : "warning",
       });
     }
   }
