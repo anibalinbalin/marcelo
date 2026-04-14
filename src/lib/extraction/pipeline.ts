@@ -226,7 +226,8 @@ function findValueInSection(
  */
 function stripNoteRef(label: string): string {
   return label
-    .replace(/\s+\d{1,3}(\.\d)?$/, "") // trailing note numbers like " 28" or " 27.6"
+    // trailing note numbers: " 28", " 27.6", " 6.d)", " 8.a"
+    .replace(/\s+\d{1,3}(\.\w+)?\)?$/, "")
     .replace(/\s*\[Subtotal\]/gi, "")   // [Subtotal] tags
     .trim();
 }
