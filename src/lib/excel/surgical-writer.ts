@@ -105,6 +105,7 @@ function countFormulasInSheet(sheetXml: string): number {
 interface PatchResult {
   xml: string;
   error?: string;
+  skipped?: string;
 }
 
 function buildCellNode(addr: string, value: number, styleAttr: string): string {
@@ -145,17 +146,20 @@ function patchCellInSheet(
     const selfClosing = match[2] === "/>";
     const inner = selfClosing ? "" : (match[3] ?? "");
 
-    // Reject shared formula masters that span a range — overwriting them
-    // would break the clone chain Excel relies on to render dependent cells.
-    // Single-cell refs (ref="BO9", no colon) are degenerate shared formulas
-    // with zero clones; they behave like standalone formulas and are safe
-    // to overwrite. CENT's template has several of these — some tool wrote
-    // them with the shared marker even though nothing shares them.
-    const sharedMasterRangeRe = /<f\b[^>]*\bt="shared"[^>]*\bref="[^"]*:/;
-    if (!selfClosing && sharedMasterRangeRe.test(inner)) {
+    // Skip formula cells. Overwriting a formula with a literal desynchronizes
+    // calcChain.xml and (in CENT's case) produces a file Excel flags as
+    // corrupt. The right architectural behavior is: let the formula stay,
+    // let fullCalcOnLoad recompute from its inputs on first open. If the
+    // pipeline is writing both a total (BO9 = Net Revenue) and its inputs
+    // (BO5, BO8), the formula will produce the correct total automatically.
+    // If a mapping targets a formula cell with no corresponding input
+    // writes, the cached stale value remains until recalc — that is a
+    // mapping bug that should be surfaced at the mapping layer, not
+    // papered over by blindly overwriting formulas.
+    if (!selfClosing && /<f\b/.test(inner)) {
       return {
         xml: sheetXml,
-        error: `Cell ${addr} is a shared formula master with clones — refusing to overwrite`,
+        skipped: `Cell ${addr} is a formula — skipped; formula will recompute on open`,
       };
     }
 
@@ -308,6 +312,10 @@ export async function writeBlueValues(
   const pathToSheet = new Map<string, string>();
   for (const [name, path] of sheetMap) pathToSheet.set(path, name);
 
+  // Addresses we intentionally skipped (e.g. formula cells). Tracked per
+  // sheet path so post-write verification doesn't flag them as missing.
+  const skippedBySheetPath = new Map<string, Set<string>>();
+
   for (const [path, writes] of writesBySheetPath) {
     const f = zip.file(path);
     if (!f) {
@@ -315,6 +323,7 @@ export async function writeBlueValues(
       continue;
     }
     let xml = await f.async("string");
+    const skipped = new Set<string>();
     for (const w of writes) {
       const addr = addressFromRowCol(w.row, w.col);
       const res = patchCellInSheet(xml, addr, w.value);
@@ -322,13 +331,24 @@ export async function writeBlueValues(
         errors.push(`${pathToSheet.get(path)}!${addr}: ${res.error}`);
         continue;
       }
+      if (res.skipped) {
+        warnings.push(`${pathToSheet.get(path)}!${addr}: ${res.skipped}`);
+        skipped.add(addr);
+        continue;
+      }
       xml = res.xml;
     }
+    skippedBySheetPath.set(path, skipped);
     zip.file(path, xml);
   }
 
-  // Force recalculation on open so formula cells don't render stale cached
-  // results in Protected View.
+  // Force recalculation on open so formula cells (which we never overwrite
+  // — see patchCellInSheet) render with fresh results from any new literal
+  // inputs we wrote. calcChain.xml is intentionally left untouched: Excel
+  // strictly validates its entries against the sheet XML, and since we
+  // never remove formulas, every calcChain entry still points at a real
+  // formula cell. Emptying or rewriting calcChain produces a "We found a
+  // problem with some content" recovery prompt in Excel for Mac.
   const patchedWorkbookXml = setFullCalcOnLoad(workbookXml);
   zip.file("xl/workbook.xml", patchedWorkbookXml);
 
@@ -352,8 +372,10 @@ export async function writeBlueValues(
     const xml = await f.async("string");
     const sheetName = pathToSheet.get(path) ?? path;
     outputFormulaCounts[sheetName] = countFormulasInSheet(xml);
+    const skipped = skippedBySheetPath.get(path) ?? new Set<string>();
     for (const w of writes) {
       const addr = addressFromRowCol(w.row, w.col);
+      if (skipped.has(addr)) continue;
       const cellRe = new RegExp(
         `<c\\b[^>]*\\br="${escapeRegex(addr)}"[^>]*>\\s*<v>([^<]+)</v>\\s*</c>`,
       );
