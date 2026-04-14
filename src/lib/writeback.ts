@@ -4,7 +4,7 @@
 import { getDb } from "@/db";
 import { extractionRuns, extractedValues, fieldMappings, companies } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { writeBlueValues, type CellWrite } from "@/lib/excel/writer";
+import { writeBlueValues, type CellWrite } from "@/lib/excel/surgical-writer";
 import { quarterToColOffset, getTargetCol } from "@/lib/quarter";
 import { colLetterToNumber } from "@/lib/excel/reader";
 
