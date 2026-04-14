@@ -9,7 +9,7 @@ function trace(values: ExtractedValueForValidation[]) {
     console.log(`\n--- ${c.name} ---`);
     for (const t of c.terms) {
       const match = values.find(v => labelMatches(v.sourceLabel, t.labels));
-      console.log(`  term [${t.labels}] coef=${t.coefficient} -> ${match ? `${match.sourceLabel} = ${match.extractedValue}` : "NO MATCH"}`);
+      console.log(`  term [${t.labels}] flow=${t.flow} -> ${match ? `${match.sourceLabel} = ${match.extractedValue}` : "NO MATCH"}`);
     }
     const result = values.find(v => labelMatches(v.sourceLabel, c.resultLabel));
     console.log(`  result [${c.resultLabel}] -> ${result ? `${result.sourceLabel} = ${result.extractedValue}` : "NO MATCH"}`);

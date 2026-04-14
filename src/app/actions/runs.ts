@@ -1,8 +1,14 @@
 "use server";
 
 import { getDb } from "@/db";
-import { extractionRuns, extractedValues } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import {
+  extractionRuns,
+  extractedValues,
+  fieldMappings,
+  mappingHistory,
+  learningEvents,
+} from "@/db/schema";
+import { eq, desc, inArray } from "drizzle-orm";
 
 export async function getRuns(companyId: number) {
   const db = getDb();
@@ -82,12 +88,98 @@ export async function approveValues(
 ) {
   const db = getDb();
 
-  // Apply any overrides
+  // W2.2 record-vs-promote split: every analyst override writes one
+  // learning_events row (the event log) and one mapping_history row
+  // (the audit trail) with the pre-override state captured. We do NOT
+  // mutate concept_aliases.usage_count or field_mappings.correction_count
+  // here — those are promotion concerns handled by W2.3 with contradiction
+  // checks and evidence gates. See
+  // docs/superpowers/plans/2026-04-13-hardening-plan.md.
   if (overrides?.length) {
-    for (const { id, value } of overrides) {
+    const ids = overrides.map((o) => o.id);
+
+    const [runForCompany] = await db
+      .select({ companyId: extractionRuns.companyId })
+      .from(extractionRuns)
+      .where(eq(extractionRuns.id, runId));
+    const companyId = runForCompany?.companyId ?? null;
+
+    const currentValues = await db
+      .select()
+      .from(extractedValues)
+      .where(inArray(extractedValues.id, ids));
+    const valueById = new Map(currentValues.map((v) => [v.id, v]));
+
+    const mappingIds = Array.from(
+      new Set(
+        currentValues
+          .map((v) => v.mappingId)
+          .filter((x): x is number => x !== null)
+      )
+    );
+    const mappings = mappingIds.length
+      ? await db
+          .select()
+          .from(fieldMappings)
+          .where(inArray(fieldMappings.id, mappingIds))
+      : [];
+    const mappingById = new Map(mappings.map((m) => [m.id, m]));
+
+    for (const { id, value: newValue } of overrides) {
+      const ev = valueById.get(id);
+      if (!ev) continue;
+      const mapping = ev.mappingId ? mappingById.get(ev.mappingId) : null;
+      const oldValue = ev.analystOverride ?? ev.extractedValue ?? null;
+
+      // Record the event first. Idempotent via the unique index on
+      // (run_id, extracted_value_id, event_type) so a double-submit is
+      // a no-op.
+      await db
+        .insert(learningEvents)
+        .values({
+          eventType: "override_applied",
+          entityType: "extracted_value",
+          entityId: id,
+          mappingId: ev.mappingId,
+          runId,
+          companyId,
+          extractedValueId: id,
+          sourceLabel: mapping?.sourceLabel ?? null,
+          previousState: {
+            extractedValue: ev.extractedValue,
+            analystOverride: ev.analystOverride,
+            confidence: ev.confidence,
+            validationStatus: ev.validationStatus,
+          },
+          newState: { analystOverride: newValue },
+          reason: "analyst_override",
+          trigger: "analyst_override",
+          actorType: "analyst",
+          actorId: approvedBy,
+        })
+        .onConflictDoNothing();
+
+      // Full audit row in mapping_history with explicit old/new and FKs.
+      if (ev.mappingId !== null) {
+        await db.insert(mappingHistory).values({
+          mappingId: ev.mappingId,
+          runId,
+          extractedValueId: id,
+          oldValue,
+          newValue,
+          previousValues: {
+            extractedValue: ev.extractedValue,
+            analystOverride: ev.analystOverride,
+          },
+          changeReason: "analyst_override",
+          changedBy: approvedBy,
+        });
+      }
+
+      // Apply the override.
       await db
         .update(extractedValues)
-        .set({ analystOverride: value })
+        .set({ analystOverride: newValue })
         .where(eq(extractedValues.id, id));
     }
   }
