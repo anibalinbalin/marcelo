@@ -53,6 +53,13 @@ export const MIN_TOLERANCE_ABSOLUTE = 1;
 /**
  * Income Statement constraints.
  * These are universal across companies using standard IFRS/GAAP.
+ *
+ * Label expansion notes (2026-04-14):
+ * - Added ENEL's Spanish labels so the existing three constraints fire on
+ *   utility-style statements: "Costo de actividades ordinarias" (cost of
+ *   sales), "Margen de contribución" (gross profit), "Gastos de
+ *   administración" (opex), "Resultado operacional" (operating income).
+ * - Kept each pattern ordering so more-specific labels win prefix matching.
  */
 export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
   {
@@ -68,30 +75,75 @@ export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
       // "Ingresos financieros" (ENEL financial income). Use the qualified
       // "Ingresos de actividades ordinarias" form instead.
       { labels: "Net Revenue|Receita Líquida|Revenue|Ingresos de Actividades Ordinarias|Ingresos de Operación|Receita", flow: "inflow" },
-      { labels: "Cost of Sales|Costo de Ventas|Custo|COGS", flow: "outflow" },
+      { labels: "Cost of Sales|Costo de Ventas|Costo de Actividades Ordinarias|Custo|COGS", flow: "outflow" },
     ],
-    resultLabel: "Gross Profit|Utilidad Bruta|Lucro Bruto",
+    resultLabel: "Gross Profit|Utilidad Bruta|Margen de Contribución|Lucro Bruto",
     toleranceFraction: 0.01,
   },
   {
     name: "operating_income",
     description: "Operating Income = Gross Profit - Operating Expenses",
     terms: [
-      { labels: "Gross Profit|Utilidad Bruta|Lucro Bruto", flow: "inflow" },
-      { labels: "Operating Expenses|Gastos de Operación|SG&A|Gastos Operativos", flow: "outflow" },
+      { labels: "Gross Profit|Utilidad Bruta|Margen de Contribución|Lucro Bruto", flow: "inflow" },
+      { labels: "Operating Expenses|Gastos de Operación|Gastos de Administración|SG&A|Gastos Operativos", flow: "outflow" },
     ],
-    resultLabel: "Operating Income|EBIT|Utilidad de Operación|Lucro Operacional",
+    resultLabel: "Operating Income|EBIT|Utilidad de Operación|Resultado Operacional|Lucro Operacional",
     toleranceFraction: 0.01,
   },
   {
     name: "net_income",
     description: "Net Income = Operating Income - Interest - Tax",
     terms: [
-      { labels: "Operating Income|EBIT|Utilidad de Operación|Lucro Operacional", flow: "inflow" },
+      { labels: "Operating Income|EBIT|Utilidad de Operación|Resultado Operacional|Lucro Operacional", flow: "inflow" },
       { labels: "Interest Expense|Gastos Financieros|Despesas Financeiras", flow: "outflow" },
       { labels: "Income Tax|Impuestos|Impostos", flow: "outflow" },
     ],
-    resultLabel: "Net Income|Utilidad Neta|Lucro Líquido",
+    resultLabel: "Net Income|Utilidad Neta|Lucro Líquido|Ganancia del Periodo",
+    toleranceFraction: 0.01,
+  },
+];
+
+/**
+ * Banking Income Statement constraints.
+ *
+ * Banks don't have Revenue - COGS = Gross Profit. Their waterfall is built
+ * on interest margin and loan provisions. These constraints are additive
+ * with INCOME_STATEMENT_CONSTRAINTS — the standard checker iterates all
+ * active constraints and only fires where the terms match.
+ *
+ * Why NIM-only (2026-04-14):
+ *
+ * BANREGIO's current mapping set captures main waterfall lines but NOT
+ * intermediate bank-specific items like fee income, trading gains,
+ * "Otros productos, neto", and subsidiary minority interest. The NIM
+ * equation (Margen financiero = Ingresos por intereses − Gastos por
+ * intereses) balances exactly. But the downstream two we originally
+ * tried to enforce (`bank_operating_income` and `bank_net_income`)
+ * produced 960 and 38 unit gaps respectively on BANREGIO clean data,
+ * which tripped false-positive violations on every run. Those are
+ * removed until the mapping set covers the missing intermediate lines.
+ *
+ * The NIM constraint alone is enough to catch any corruption on
+ * Ingresos por intereses, Gastos por intereses, or Margen financiero.
+ * The victim picker targets those rows first because their labels
+ * match the NIM term patterns, so 5-of-5 non-clean corruptions are
+ * caught on the eval corpus. Adding the downstream constraints back
+ * (with correct "other" term coverage) is a follow-up.
+ *
+ * BANREGIO-specific labels (Spanish, Mexican banking convention):
+ * - Ingresos por intereses → interest income
+ * - Gastos por intereses → interest expense
+ * - Margen financiero → net interest margin (NIM)
+ */
+export const BANKING_INCOME_CONSTRAINTS: ArithmeticConstraint[] = [
+  {
+    name: "net_interest_margin",
+    description: "Net Interest Margin = Interest Income - Interest Expense",
+    terms: [
+      { labels: "Ingresos por Intereses|Interest Income|Net Interest Income|Intereses Ganados", flow: "inflow" },
+      { labels: "Gastos por Intereses|Interest Expense|Intereses Pagados", flow: "outflow" },
+    ],
+    resultLabel: "Margen Financiero|Net Interest Margin|NIM|Margen de Interés Neto",
     toleranceFraction: 0.01,
   },
 ];
@@ -145,13 +197,18 @@ export const BALANCE_SHEET_CONSTRAINTS: ArithmeticConstraint[] = [
 
 /**
  * Get all constraints for a given statement type.
+ *
+ * For income statements, both standard and banking constraints are returned.
+ * The checker's `termsFound < 2` guard silently skips constraints whose
+ * terms don't exist in the run, so companies with standard IS layouts won't
+ * trip on banking labels and vice versa. No per-company routing required.
  */
 export function getConstraintsForStatement(
   statementType: "income" | "balance" | "cashflow"
 ): ArithmeticConstraint[] {
   switch (statementType) {
     case "income":
-      return INCOME_STATEMENT_CONSTRAINTS;
+      return [...INCOME_STATEMENT_CONSTRAINTS, ...BANKING_INCOME_CONSTRAINTS];
     case "balance":
       return BALANCE_SHEET_CONSTRAINTS;
     case "cashflow":

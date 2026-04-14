@@ -596,3 +596,161 @@ flaky / never-caught, making LLM noise visible at a glance.
 
 Raw output: `/tmp/eval-stability-enel.md` (run at `2026-04-14T10:52Z`,
 281s wall time, 81 judge votes across 18 cases).
+
+---
+
+## Fifth run — banking constraints + ENEL label expansion (v7)
+
+Added industry-specific constraint coverage, scoped conservatively:
+
+1. **`net_interest_margin` banking constraint** in a new
+   `BANKING_INCOME_CONSTRAINTS` export:
+   `Margen Financiero = Ingresos por Intereses − Gastos por Intereses`.
+   Additive with the standard IS constraints (the engine's
+   `termsFound < 2` guard silently skips constraints whose terms
+   don't exist in the run).
+2. **ENEL label expansion** on the existing three IS constraints:
+   added "Costo de Actividades Ordinarias", "Margen de Contribución",
+   "Gastos de Administración", "Resultado Operacional", "Ganancia
+   del Periodo" so the standard gross_profit / operating_income /
+   net_income constraints can fire on ENEL's utility-style layout.
+
+### What got dropped and why
+
+My first attempt at banking constraints included three rules:
+`net_interest_margin`, `bank_operating_income`, and `bank_net_income`.
+A v6 eval run immediately showed BANREGIO clean failing with 2
+violations. Investigation:
+
+```
+Ingresos por intereses     7566
+Gastos por intereses      -3546
+Margen financiero          4020   (7566 − 3546 = 4020 ✓ exact)
+
++ Estimación preventiva    -471
++ Gastos de Operación     -2031
+Resultado de la operación  2478   (4020 − 471 − 2031 = 1518 ✗ gap of 960)
+
++ I.S.R. y P.T.U.          -616
+Resultado neto             1824   (2478 − 616 = 1862 ✗ gap of 38)
+```
+
+BANREGIO's mapping set captures the headline waterfall lines but not
+the intermediate items: fee income, trading gains, "Otros productos,
+neto", subsidiary minority interest. The missing-term gaps (960 and
+38) are the sum of those uncaptured lines. NIM balances exactly
+because there's nothing uncaptured between interest income/expense
+and the NIM result.
+
+Dropped the two broken constraints, kept NIM only. The victim picker
+still lands on `Ingresos por intereses` because the NIM term labels
+match, and the single NIM constraint is enough to catch every
+BANREGIO corruption in the eval.
+
+### Headline numbers (v7)
+
+| metric | 3rd | 4th | 5th | **v7 (this run)** |
+|---|---|---|---|---|
+| False positive rate | 0% | 0% | 0% | **0%** |
+| Sign flip | 100% | 100% | 100% | **100%** |
+| Magnitude ×1000 | 50% | 25% | 25% | **75%** |
+| Decimal shift | 50% | 25% | 25% | **75%** |
+| Row swap | 75% | 75% | 75% | **75%** |
+| Zero wipe | 50% | 25% | 25% | **75%** |
+| **Aggregate non-clean** | **65%** | **55%** | **50%** | **80%** |
+
+Per-company:
+
+| run | company | non-clean caught | change |
+|---|---|---|---|
+| 29 | CENT | 5/5 | unchanged |
+| 16 | BANREGIO | **5/5** | **was 2/5** — NIM constraint fires |
+| 51 | NTCO3 | 1/5 | unchanged (still no rule-based layer) |
+| 12 | ENELCHILE | 5/5 | single-sample lucky run, honest rate ~53% per stability eval |
+
+### BANREGIO went from 40% to 100% catch on non-clean
+
+Before v7, BANREGIO caught sign_flip + row_swap via the basic
+validator's sign check, but every other corruption passed because
+`shouldTriggerAdversarial` returned false (no low-confidence
+mappings, no violations) — the LLM critic never ran. With NIM
+constraint firing, every corruption on `Ingresos por intereses`
+now:
+
+1. Produces 1 NIM violation (the arithmetic no longer balances)
+2. Triggers the adversarial critic via `violations > 0`
+3. The critic returns `needs_review`
+
+Net effect: BANREGIO is now at 5/5 via constraint + critic, same as
+CENT. The only remaining corpus gap is NTCO3 (1/5), which still has
+no rule-based layer because the Natura mapping set lacks Net
+revenue and Gross profit as explicit rows.
+
+### ENEL victim picker shifted from Ingresos financieros to Intereses pagados
+
+Side effect of adding `Intereses Pagados` as a NIM term alternative:
+ENEL has an "Intereses pagados" cash-flow-style line that
+prefix-matches the NIM term pattern. The picker now prefers that
+over `Ingresos financieros`. Both rows have `validation_sign` set
+(one positive, one negative), so sign_flip still catches via basic.
+The adversarial catches the rest because ENEL's low-confidence
+mappings keep `shouldTriggerAdversarial` returning true.
+
+This is not a meaningful change in ENEL's underlying catch
+mechanism — it's still the LLM critic floor plus basic validator.
+The single-sample 5/5 shown in v7 is partly luck (see stability eval
+above where ENEL's honest non-clean rate is ~53%). Repeat the run
+and mag×1000 / decimal_shift / zero_wipe may flip again.
+
+### Honest aggregate accounting for ENEL variance
+
+- CENT: 5/5 (stable, rule-based)
+- BANREGIO: 5/5 (stable, rule-based via NIM)
+- NTCO3: 1/5 (stable, basic only)
+- ENEL: 2-5/5 per run (flaky, LLM floor)
+
+Stable floor: **13/20 = 65%** (CENT + BANREGIO + NTCO3 + ENEL's 2
+stable catches).
+Single-sample upper bound: **16/20 = 80%** (this v7 run).
+
+The stable 65% is the real ceiling without more work on NTCO3. The
+other 15% is LLM critic jitter on ENEL. A corpus with more companies
+on stable rule-based paths would shrink the jitter window.
+
+### What's still missing
+
+- **NTCO3/LREN3/BIMBO/KIMBER/NATURA need either:**
+  (a) explicit Net revenue and Gross profit rows added to their
+      mapping sets, so the standard `gross_profit` constraint can
+      fire, or
+  (b) a relaxed constraint engine that supports "sum-to-result"
+      rules with N terms instead of the current 2-3 term limit, so
+      `Net income = Gross revenues − Deductions − COGS − OpEx − ...`
+      can be enforced directly.
+  Both are larger scope than label expansion. Left as follow-up.
+
+- **BANREGIO's bank_operating_income and bank_net_income constraints
+  need the missing intermediate rows** (Otros productos, Comisiones,
+  Resultado por intermediación, Subsidiarias) to balance. Or, the
+  constraint engine needs an "allow residual" mode where a 2-10% gap
+  is absorbed into an "other" bucket.
+
+### Fifth raw eval output
+
+Full per-case table lives in `/tmp/eval-output-v7.md`. Corpus: CENT
+run 29, BANREGIO run 16, NTCO3 run 51, ENELCHILE run 12. 24 cases,
+~200s wall time. Single-sample FPR 0%, catch rate 80%.
+
+### Verdict (fifth time)
+
+- **Banking constraint dictionary shipped (NIM only).** BANREGIO
+  went from 40% → 100% on non-clean catch. Biggest single move
+  in the eval series.
+- **ENEL label expansion shipped.** Doesn't change catch mechanism
+  (still LLM floor), but removes the "uncovered" target classification
+  from ENEL cases.
+- **Next biggest leverage:** give NTCO3 a rule-based layer. Either
+  extend its mapping set to include Net revenue and Gross profit, or
+  generalize the constraint engine to accept N-term sum-to-result
+  rules so the full Natura waterfall can be enforced without
+  intermediate mappings.

@@ -42,10 +42,12 @@ import {
   type ValidationInput,
 } from "../src/lib/validation/engine";
 import {
-  INCOME_STATEMENT_CONSTRAINTS,
+  getConstraintsForStatement,
   labelMatches,
   type ArithmeticConstraint,
 } from "../src/lib/validation/constraints";
+
+const INCOME_CONSTRAINTS = getConstraintsForStatement("income");
 
 const DEFAULT_RUNS = [29, 16, 21, 12];
 
@@ -297,7 +299,7 @@ async function evalCase(
   const { values: corrupted, description, target } = applyCorruption(
     clean,
     corruption,
-    INCOME_STATEMENT_CONSTRAINTS
+    INCOME_CONSTRAINTS
   );
 
   // Run basic validator first — this is what Camila's pipeline does before
