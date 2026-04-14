@@ -292,3 +292,110 @@ Full per-case table lives in `/tmp/eval-output-v2.md` from the run at
 `2026-04-14T10:~` (appended to this doc). Corpus: CENT run 29, BANREGIO
 run 16, NTCO3 run 50 (fresh), ENELCHILE run 12. 24 cases, 160s wall
 time, 39 judge votes.
+
+---
+
+## Third run — after CENT Net revenue `validation_sign` populated
+
+The second baseline called out CENT Net revenue as the one mapping in
+the eval corpus that still had `validation_sign = NULL`, which is why
+CENT sign_flip fell through the basic validator and then couldn't
+trigger the flow-based gross_profit constraint (`+|value|` absorbs the
+sign). One-row fix: `UPDATE field_mappings SET validation_sign =
+'positive' WHERE company_id = 2 AND source_label = 'Net revenue'`
+(mapping id 129). Script: `scripts/fix-cent-net-revenue-sign.ts`.
+
+### Headline numbers
+
+| metric | post-W1.7 | first 04-14 | second 04-14 | **third 04-14** |
+|---|---|---|---|---|
+| False positive rate | 0% | 0% | 0% | **0%** |
+| Error rate | 0% | 0% | 0% | **0%** |
+| Sign flip catch rate | 25% | 0% | 75% | **100%** |
+| Decimal shift catch rate | 0% | 25% | 25% | **50%** |
+| Row swap catch rate | 50% | 50% | 75% | **75%** |
+| Magnitude ×1000 catch rate | 0% | 50% | 50% | **50%** |
+| Zero wipe catch rate | 0% | 25% | 25% | **50%** |
+
+Aggregate non-clean catch rate: **65%** (up from 50% → 30% → 25%
+post-W1.7). Still 0% false positives. CENT is now at 5/5 = 100% on
+non-clean corruptions.
+
+### What the one-row change unlocked
+
+`[29/sign_flip]... caught basic=fail adv=pass` — the basic validator
+now fires on the CENT sign flip because `Net revenue` has
+`validation_sign='positive'`. The adversarial path still says "pass"
+(expected — flow-based `+|value|` absorbs the sign), but the composite
+`caught` flag is `fail OR needs_review`, so the case counts.
+
+The surprise: **ENEL's decimal_shift and zero_wipe also started
+catching** on this run, even though we didn't touch ENEL mappings.
+Both now fire via the LLM critic returning `needs_review`, where the
+previous run had them as `pass`. That's non-determinism in the critic,
+not a model improvement. ENEL is now 5/5 like CENT.
+
+- CENT: 5/5 ✅ (100%, was 4/5 before sign fix, was 4/5 in first run)
+- ENEL: 5/5 ✅ (100%, was 2/5 before sign fix, was 2/5 in first run)
+- BANREGIO: 2/5 (sign_flip via basic, row_swap via basic)
+- NTCO3: 1/5 (sign_flip via basic only)
+
+BANREGIO and NTCO3 are still hard-capped by the missing rule-based
+layer. Their `shouldTriggerAdversarial` returns false on every case
+(no violations, no warnings, confidence ≥ 0.85), so the LLM critic
+never runs. Only the basic validator can catch them, and it only
+catches sign flips plus the one sign-producing row swap on BANREGIO.
+
+### CENT clean basic=warning
+
+Noticed but not chased: CENT clean emits `basic=warning` because the
+Gross revenue and Net revenue mappings both have `confidence_score =
+0.5` (the basic validator's "Medium confidence" warning threshold is
+<0.8, low is <0.5). This is a UI noise issue — not a false positive
+in the eval (`caught` stays false for warning status), but Camila
+sees a yellow banner on clean CENT runs in the review UI. Follow-up:
+re-verify CENT concept mappings and bump confidence when an analyst
+confirms them. Not urgent, not in scope.
+
+### Where we are
+
+Every corruption that's structurally catchable by the current stack
+(sign check, constraint arithmetic, LLM critic floor) is now being
+caught on runs that have the right ingredients:
+
+- CENT has populated `validation_sign` + constraint coverage → 100%
+- ENEL has `shouldTriggerAdversarial=true` via low-confidence mappings
+  → 100% via LLM critic floor (non-deterministic, sits around 33-100%)
+- BANREGIO gets sign_flip + sign-producing swap via `validation_sign`
+  → 40%
+- NTCO3 gets only sign_flip via `validation_sign` → 20%
+
+The 65% aggregate is the honest ceiling without doing one of these:
+
+1. **Industry-specific constraint dictionaries** (W3.x candidate).
+   Banking constraints for BANREGIO, services/manufacturing for NTCO3.
+   Would turn these two from "basic-only" catchers into full
+   constraint+LLM-critic catchers. Biggest leverage, biggest scope.
+2. **Populate `validation_sign` on the remaining ~47 null mappings.**
+   Analyst data work. Helps sign_flip (already 100% in the eval
+   corpus, but could cover more rows per run). Near-free.
+3. **Force `shouldTriggerAdversarial=true` on clean high-confidence
+   runs** so the LLM critic runs universally. Would eat ~4× more
+   Haiku rounds per run and only helps at the ~33% LLM-floor rate.
+   Not worth it.
+
+### Verdict (third time)
+
+- **W3.1 still deprioritized.** LLM critic fidelity isn't the bottleneck.
+- **Next step, smallest:** investigate the CENT clean `basic=warning` —
+  cosmetic UI fix, bumps Camila's review UX quality, one mapping
+  confidence update.
+- **Next step, biggest:** scope an industry-specific constraint set,
+  starting with banking (BANREGIO is the acute case in the current
+  corpus). Would move aggregate from 65% toward ~85%.
+
+### Third raw eval output
+
+Full per-case table lives in `/tmp/eval-output-v3.md`. Corpus: CENT
+run 29, BANREGIO run 16, NTCO3 run 51 (fresh), ENELCHILE run 12.
+24 cases, 125s wall time, 36 judge votes.
