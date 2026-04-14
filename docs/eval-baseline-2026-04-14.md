@@ -492,3 +492,107 @@ critic was slightly less aggressive, not the other way around.
 Full per-case table lives in `/tmp/eval-output-v4.md`. Corpus: CENT
 run 29, BANREGIO run 16, NTCO3 run 51, ENELCHILE run 12.
 24 cases, 153s wall time, 39 judge votes.
+
+---
+
+## Stability run — ENEL × 3 repeats (2026-04-14)
+
+Every prior baseline used 1 sample per corruption per company, and the
+4th baseline flagged LLM critic variance on ENEL as the likely
+explanation for apparent catch-rate fluctuations. Added a `--stability`
+mode to the harness to quantify it:
+
+```bash
+pnpm tsx scripts/eval-validator-harness.ts --stability 12 3
+```
+
+### Results
+
+| corruption | catches | rate | basic stable? | adv variance |
+|---|---|---|---|---|
+| clean | 1/3 | **33% FPR** | no | flaky (pass/needs_review) |
+| sign_flip | 3/3 | 100% | yes | flaky (pass/needs_review) |
+| magnitude_1000x | 2/3 | 67% | no | flaky (pass/needs_review) |
+| decimal_shift | 0/3 | **0%** | no | pass (always) |
+| row_swap | 3/3 | 100% | yes | needs_review (stable) |
+| zero_wipe | 0/3 | **0%** | no | pass (always) |
+
+Stable non-clean catches: **sign_flip** and **row_swap** (both via
+the basic validator's `validation_sign` fail path).
+Flaky non-clean catches: **magnitude_1000x** (LLM critic jitter).
+Never caught: **decimal_shift** and **zero_wipe**.
+
+### Findings that invalidate prior baselines
+
+1. **ENEL's "0% false positive rate" was a single-sample artifact.**
+   Across 3 clean repeats, the LLM critic flagged the unmodified run
+   once — a 33% FPR on clean ENEL. Because ENEL has 3 low-confidence
+   mappings (≤0.85), `shouldTriggerAdversarial` returns true on every
+   clean run, so the critic runs and occasionally returns
+   `needs_review` on valid data. CENT/BANREGIO/NTCO3 don't trigger the
+   critic on clean runs (confidence ≥0.85, no violations), so their
+   structural FPR is zero and dominated the single-sample average.
+
+2. **ENEL's `decimal_shift` and `zero_wipe` catches in v3/v4 were
+   luck.** Both corruptions never caught across 3 stability repeats.
+   The previous "25%" headline number was a single lucky LLM
+   judgment. True catch rate on these corruptions for ENEL is **0%**.
+
+3. **Honest ENEL non-clean catch rate: 8/15 = ~53%**, not 100% as v3
+   briefly suggested. The stable floor is sign_flip + row_swap via
+   the basic validator (both deterministic), plus ~67% on
+   magnitude_1000x via the flaky LLM critic.
+
+### Corpus-wide FPR is higher than we were reporting
+
+All four prior baselines reported "0% false positive rate on clean
+runs" based on 4 samples (one per company). The stability run shows
+that sample size was not enough to detect ENEL's ~33% critic flake.
+A more honest aggregate FPR estimate:
+
+- CENT clean: 0% (structurally doesn't trigger critic)
+- BANREGIO clean: 0% (structurally doesn't trigger critic)
+- NTCO3 clean: 0% (structurally doesn't trigger critic)
+- ENEL clean: **33%** (observed 1/3 in stability run)
+
+**Weighted FPR** depends on how often each company-state occurs. In
+the current corpus ENEL is 1 of 4 companies, so corpus-wide FPR ≈
+`(0 + 0 + 0 + 33) / 4 = 8.3%`. In production, where ENEL-like runs
+(low-confidence fuzzy matches present) are some meaningful fraction
+of traffic, the real FPR is somewhere between 0% and 33% depending
+on mix.
+
+### Follow-ups unlocked by this data
+
+1. **Investigate the ENEL LLM critic false positive.** The critic is
+   flagging unmodified data as `needs_review` one in three runs. Is
+   this the judge prompt, the author prompt, specific judge model
+   sampling, or the `shouldTriggerAdversarial` trigger being too
+   aggressive on low-confidence mappings? Worth a focused debugging
+   session.
+
+2. **Reclassify the decimal_shift / zero_wipe catch rate honestly.**
+   Prior baselines credited ENEL with 25% on each. The stability run
+   shows 0%. Aggregate catch rate on these corruptions across the
+   corpus should be revised downward: e.g., decimal_shift honest rate
+   is 1/4 = 25% (CENT only), not 50% as v3 claimed.
+
+3. **Default to 3-repeat stability for ENEL in future baselines.**
+   Any metric that depends on ENEL's LLM critic path is noisy at N=1.
+   Either average across repeats or report the median.
+
+### Harness changes shipped
+
+`scripts/eval-validator-harness.ts` now supports:
+
+```bash
+pnpm tsx scripts/eval-validator-harness.ts --stability RUN_ID [REPEAT=3]
+```
+
+Stability mode repeats the same run N times and prints a stability
+table showing catch rate, basic-layer stability, and adversarial
+variance per corruption. It also classifies corruptions as stable /
+flaky / never-caught, making LLM noise visible at a glance.
+
+Raw output: `/tmp/eval-stability-enel.md` (run at `2026-04-14T10:52Z`,
+281s wall time, 81 judge votes across 18 cases).

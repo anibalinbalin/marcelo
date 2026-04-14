@@ -19,6 +19,11 @@
  * Usage:
  *   pnpm tsx scripts/eval-validator-harness.ts              # default runs
  *   pnpm tsx scripts/eval-validator-harness.ts 29 16 21 12  # specific runs
+ *   pnpm tsx scripts/eval-validator-harness.ts --stability 12 3   # run 12 × 3 repeats
+ *
+ * Stability mode: repeats a single run N times and reports per-corruption
+ * variance. Used to filter LLM critic non-determinism out of aggregate
+ * catch-rate metrics. See docs/eval-baseline-2026-04-14.md §4 for rationale.
  *
  * Output: prints a markdown table to stdout. Pipe to a file if you want
  * to save the baseline.
@@ -437,6 +442,64 @@ function printSummary(results: EvalResult[]): void {
       `\n**False positive rate on clean runs:** ${falsePos}/${clean.length} = ${((falsePos / clean.length) * 100).toFixed(0)}%`
     );
   }
+}
+
+function printStabilityReport(
+  results: EvalResult[],
+  runId: number,
+  repeat: number
+): void {
+  const company = results[0]?.company ?? `run ${runId}`;
+  console.log(
+    `\n\n## Stability report — ${company} run ${runId} × ${repeat} repeats`
+  );
+  console.log(
+    "\nEach corruption was applied ${repeat} times to the same run. If catches are non-deterministic (LLM critic variance), this table shows it."
+      .replace("${repeat}", String(repeat))
+  );
+  console.log("\n| corruption | catches | rate | basic always? | adv variance |");
+  console.log("|------------|---------|------|---------------|--------------|");
+
+  for (const kind of ALL_CORRUPTIONS) {
+    const cases = results.filter((r) => r.corruption === kind);
+    if (cases.length === 0) continue;
+    const caught = cases.filter((r) => r.caught).length;
+    const rate = ((caught / cases.length) * 100).toFixed(0);
+    const allBasicFail = cases.every((r) => r.basicStatus === "fail");
+    const basicMarker = allBasicFail
+      ? "yes (stable)"
+      : cases.some((r) => r.basicStatus === "fail")
+        ? "partial"
+        : "no";
+    const advStatuses = new Set(cases.map((r) => r.adversarialStatus));
+    const advVariance = advStatuses.size > 1 ? `flaky (${[...advStatuses].join("/")})` : [...advStatuses][0];
+    console.log(
+      `| ${kind} | ${caught}/${cases.length} | ${rate}% | ${basicMarker} | ${advVariance} |`
+    );
+  }
+
+  // Overall stability: how many corruptions have 100% catch across all repeats?
+  const stable: CorruptionKind[] = [];
+  const flaky: CorruptionKind[] = [];
+  const neverCaught: CorruptionKind[] = [];
+  for (const kind of ALL_CORRUPTIONS) {
+    if (kind === "clean") continue;
+    const cases = results.filter((r) => r.corruption === kind);
+    if (cases.length === 0) continue;
+    const caught = cases.filter((r) => r.caught).length;
+    if (caught === cases.length) stable.push(kind);
+    else if (caught === 0) neverCaught.push(kind);
+    else flaky.push(kind);
+  }
+  console.log(
+    `\n**Stable catches (every repeat):** ${stable.length > 0 ? stable.join(", ") : "none"}`
+  );
+  console.log(
+    `**Flaky catches (varies run-to-run):** ${flaky.length > 0 ? flaky.join(", ") : "none"}`
+  );
+  console.log(
+    `**Never caught:** ${neverCaught.length > 0 ? neverCaught.join(", ") : "none"}`
+  );
 
   // Overall cost
   const totalDuration = results.reduce((s, r) => s + r.durationMs, 0);
@@ -452,11 +515,34 @@ function printSummary(results: EvalResult[]): void {
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const argRuns = process.argv
-    .slice(2)
+  const args = process.argv.slice(2);
+
+  // --stability RUN_ID REPEAT mode
+  const stabilityIdx = args.indexOf("--stability");
+  const stabilityMode = stabilityIdx !== -1;
+  let stabilityRunId = 0;
+  let stabilityRepeat = 3;
+  if (stabilityMode) {
+    stabilityRunId = Number.parseInt(args[stabilityIdx + 1] ?? "", 10);
+    stabilityRepeat = Number.parseInt(args[stabilityIdx + 2] ?? "3", 10);
+    if (!Number.isFinite(stabilityRunId) || stabilityRunId <= 0) {
+      console.error("Usage: --stability RUN_ID [REPEAT_COUNT=3]");
+      process.exit(1);
+    }
+    if (!Number.isFinite(stabilityRepeat) || stabilityRepeat <= 0) {
+      stabilityRepeat = 3;
+    }
+  }
+
+  const argRuns = args
+    .filter((s) => s !== "--stability")
     .map((s) => Number.parseInt(s, 10))
     .filter(Number.isFinite);
-  const runs = argRuns.length > 0 ? argRuns : DEFAULT_RUNS;
+  const runs = stabilityMode
+    ? Array.from({ length: stabilityRepeat }, () => stabilityRunId)
+    : argRuns.length > 0
+      ? argRuns
+      : DEFAULT_RUNS;
 
   if (!process.env.DATABASE_URL) {
     console.error("DATABASE_URL not set in .env.local");
@@ -469,14 +555,20 @@ async function main() {
 
   const sql = neon(process.env.DATABASE_URL);
 
-  console.log(
-    `# Adversarial validator eval — ${new Date().toISOString()}\n\nRuns: ${runs.join(", ")}\nCorruptions: ${ALL_CORRUPTIONS.join(", ")}\nStatement type: income (v1 assumption)\n`
-  );
+  const header = stabilityMode
+    ? `# Adversarial validator stability eval — ${new Date().toISOString()}\n\nTarget: run ${stabilityRunId} × ${stabilityRepeat} repeats\nCorruptions: ${ALL_CORRUPTIONS.join(", ")}\nStatement type: income (v1 assumption)\n`
+    : `# Adversarial validator eval — ${new Date().toISOString()}\n\nRuns: ${runs.join(", ")}\nCorruptions: ${ALL_CORRUPTIONS.join(", ")}\nStatement type: income (v1 assumption)\n`;
+  console.log(header);
 
   const results: EvalResult[] = [];
+  let repeatIdx = 0;
   for (const runId of runs) {
+    repeatIdx++;
     for (const corruption of ALL_CORRUPTIONS) {
-      process.stderr.write(`  [${runId}/${corruption}]... `);
+      const label = stabilityMode
+        ? `  [${runId}#${repeatIdx}/${corruption}]... `
+        : `  [${runId}/${corruption}]... `;
+      process.stderr.write(label);
       try {
         const r = await evalCase(sql, runId, corruption);
         results.push(r);
@@ -489,8 +581,12 @@ async function main() {
     }
   }
 
-  printResultsTable(results);
-  printSummary(results);
+  if (stabilityMode) {
+    printStabilityReport(results, stabilityRunId, stabilityRepeat);
+  } else {
+    printResultsTable(results);
+    printSummary(results);
+  }
 }
 
 main().catch((err) => {
