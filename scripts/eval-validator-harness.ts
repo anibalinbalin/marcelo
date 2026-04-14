@@ -32,6 +32,11 @@ import {
   shouldTriggerAdversarial,
   type ExtractedValueForValidation,
 } from "../src/lib/validation/adversarial";
+import {
+  INCOME_STATEMENT_CONSTRAINTS,
+  labelMatches,
+  type ArithmeticConstraint,
+} from "../src/lib/validation/constraints";
 
 const DEFAULT_RUNS = [29, 16, 21, 12];
 
@@ -54,24 +59,67 @@ const ALL_CORRUPTIONS: CorruptionKind[] = [
 
 // ── Corruption strategies ────────────────────────────────────────────────────
 
+/**
+ * Try to find a row whose label participates in any arithmetic constraint
+ * (either as a term or as the result). Corrupting a constraint-adjacent row
+ * lets the harness measure what the validator can actually catch via its
+ * real mechanism, rather than reflecting "harness picked an uncovered row"
+ * luck. See docs/eval-baseline-2026-04-13-post-w1-7.md for the rationale.
+ */
+function pickConstrainedVictim(
+  values: ExtractedValueForValidation[],
+  constraints: ArithmeticConstraint[]
+): number {
+  const patterns: string[] = [];
+  for (const c of constraints) {
+    for (const t of c.terms) patterns.push(t.labels);
+    patterns.push(c.resultLabel);
+  }
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    const n = parseFloat(v.extractedValue);
+    if (isNaN(n) || n === 0) continue;
+    if (patterns.some((p) => labelMatches(v.sourceLabel, p))) return i;
+  }
+  return -1;
+}
+
+type CorruptionTarget = "constrained" | "uncovered";
+
 function applyCorruption(
   values: ExtractedValueForValidation[],
-  kind: CorruptionKind
-): { values: ExtractedValueForValidation[]; description: string } {
+  kind: CorruptionKind,
+  constraints: ArithmeticConstraint[]
+): {
+  values: ExtractedValueForValidation[];
+  description: string;
+  target: CorruptionTarget;
+} {
   if (kind === "clean") {
-    return { values, description: "unmodified" };
+    return { values, description: "unmodified", target: "constrained" };
   }
 
   const copy = values.map((v) => ({ ...v }));
 
-  // Pick the first row with a parseable non-zero value — that's our victim
-  const victimIdx = copy.findIndex((v) => {
-    const n = parseFloat(v.extractedValue);
-    return !isNaN(n) && n !== 0;
-  });
+  // Prefer constraint-adjacent victims so we measure validator capability,
+  // not coverage luck. Fall back to first-non-zero if no constrained row
+  // exists in this run's extracted values.
+  let victimIdx = pickConstrainedVictim(copy, constraints);
+  let target: CorruptionTarget = "constrained";
+  if (victimIdx === -1) {
+    victimIdx = copy.findIndex((v) => {
+      const n = parseFloat(v.extractedValue);
+      return !isNaN(n) && n !== 0;
+    });
+    target = "uncovered";
+  }
 
   if (victimIdx === -1) {
-    return { values: copy, description: "no non-zero value to corrupt" };
+    return {
+      values: copy,
+      description: "no non-zero value to corrupt",
+      target,
+    };
   }
 
   const victim = copy[victimIdx];
@@ -83,6 +131,7 @@ function applyCorruption(
       return {
         values: copy,
         description: `flipped ${victim.sourceLabel}: ${original} -> ${-original}`,
+        target,
       };
     }
     case "magnitude_1000x": {
@@ -90,6 +139,7 @@ function applyCorruption(
       return {
         values: copy,
         description: `×1000 on ${victim.sourceLabel}: ${original} -> ${original * 1000}`,
+        target,
       };
     }
     case "decimal_shift": {
@@ -97,6 +147,7 @@ function applyCorruption(
       return {
         values: copy,
         description: `÷10 on ${victim.sourceLabel}: ${original} -> ${original / 10}`,
+        target,
       };
     }
     case "row_swap": {
@@ -107,7 +158,7 @@ function applyCorruption(
         return !isNaN(n) && n !== original;
       });
       if (partnerIdx === -1) {
-        return { values: copy, description: "no partner row to swap" };
+        return { values: copy, description: "no partner row to swap", target };
       }
       const partner = copy[partnerIdx];
       copy[victimIdx] = { ...victim, extractedValue: partner.extractedValue };
@@ -115,6 +166,7 @@ function applyCorruption(
       return {
         values: copy,
         description: `swapped "${victim.sourceLabel}" <-> "${partner.sourceLabel}"`,
+        target,
       };
     }
     case "zero_wipe": {
@@ -122,10 +174,11 @@ function applyCorruption(
       return {
         values: copy,
         description: `zeroed ${victim.sourceLabel} (was ${original})`,
+        target,
       };
     }
     default:
-      return { values: copy, description: "unknown corruption" };
+      return { values: copy, description: "unknown corruption", target };
   }
 }
 
@@ -201,6 +254,7 @@ type EvalResult = {
   company: string;
   quarter: string;
   corruption: CorruptionKind;
+  target: CorruptionTarget;
   description: string;
   triggered: boolean; // what shouldTriggerAdversarial would have said
   status: "pass" | "needs_review" | "error";
@@ -218,11 +272,11 @@ async function evalCase(
 ): Promise<EvalResult> {
   const { company, quarter, values: clean } = await loadRunValues(sql, runId);
 
-  // Bump confidence of one row slightly low on clean + corrupted cases so
-  // shouldTriggerAdversarial reports meaningfully; we still call
-  // runAdversarialValidation directly below regardless of its answer, but
-  // the "would it have triggered naturally?" signal is useful.
-  const { values: corrupted, description } = applyCorruption(clean, corruption);
+  const { values: corrupted, description, target } = applyCorruption(
+    clean,
+    corruption,
+    INCOME_STATEMENT_CONSTRAINTS
+  );
 
   const triggered = shouldTriggerAdversarial(corrupted);
 
@@ -236,6 +290,7 @@ async function evalCase(
       company,
       quarter,
       corruption,
+      target,
       description,
       triggered,
       status: "error",
@@ -253,6 +308,7 @@ async function evalCase(
     company,
     quarter,
     corruption,
+    target,
     description,
     triggered,
     status: result.status,
@@ -267,16 +323,16 @@ async function evalCase(
 
 function printResultsTable(results: EvalResult[]): void {
   console.log(
-    "\n| run | company | corruption | trigger? | status | violations | rounds | votes | duration | detail |"
+    "\n| run | company | corruption | target | trigger? | status | violations | rounds | votes | duration | detail |"
   );
   console.log(
-    "|-----|---------|------------|----------|--------|------------|--------|-------|----------|--------|"
+    "|-----|---------|------------|--------|----------|--------|------------|--------|-------|----------|--------|"
   );
   for (const r of results) {
     const detail = r.errorMsg ? `ERROR: ${r.errorMsg}` : r.description;
     const status = r.status === "error" ? `❌ error` : r.status;
     console.log(
-      `| ${r.runId} | ${r.company} | ${r.corruption} | ${r.triggered ? "yes" : "no"} | ${status} | ${r.violations} | ${r.roundsNeeded} | ${r.judgeVoteCount} | ${r.durationMs}ms | ${detail} |`
+      `| ${r.runId} | ${r.company} | ${r.corruption} | ${r.target} | ${r.triggered ? "yes" : "no"} | ${status} | ${r.violations} | ${r.roundsNeeded} | ${r.judgeVoteCount} | ${r.durationMs}ms | ${detail} |`
     );
   }
 }
@@ -302,6 +358,26 @@ function printSummary(results: EvalResult[]): void {
     const rate = ((caught / cases.length) * 100).toFixed(0);
     console.log(
       `| ${kind} | ${cases.length} | ${caught} | ${errors} | ${passed} | ${rate}% |`
+    );
+  }
+
+  // Break out catch rate by corruption target. "constrained" means the
+  // harness corrupted a row that's an input to an arithmetic constraint.
+  // "uncovered" means the run had no constraint-adjacent row and fell back
+  // to first-non-zero. Uncovered catch rate is a floor on LLM-only detection;
+  // constrained catch rate is the real validator capability.
+  console.log("\n## Summary — catch rate by corruption target");
+  console.log("\n| target | n | caught | errors | pass | catch rate |");
+  console.log("|--------|---|--------|--------|------|------------|");
+  for (const target of ["constrained", "uncovered"] as const) {
+    const cases = results.filter((r) => r.target === target && r.corruption !== "clean");
+    if (cases.length === 0) continue;
+    const caught = cases.filter((r) => r.status === "needs_review").length;
+    const errors = cases.filter((r) => r.status === "error").length;
+    const passed = cases.filter((r) => r.status === "pass").length;
+    const rate = ((caught / cases.length) * 100).toFixed(0);
+    console.log(
+      `| ${target} | ${cases.length} | ${caught} | ${errors} | ${passed} | ${rate}% |`
     );
   }
 
