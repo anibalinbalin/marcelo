@@ -212,7 +212,7 @@ export function ReviewTable({
             <TableCell>
               <ConfidenceDot confidence={v.confidence} />
             </TableCell>
-            <TableCell className="align-top">
+            <TableCell>
               <StatusCell
                 status={v.validationStatus}
                 message={v.validationMessage}
