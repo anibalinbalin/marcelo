@@ -168,7 +168,7 @@ Return JSON only:
 }`;
 
   const result = await generateText({
-    model: openrouter("anthropic/claude-haiku-3"),
+    model: openrouter("anthropic/claude-haiku-4.5"),
     messages: [{ role: "user", content: prompt }],
   });
 
@@ -182,7 +182,8 @@ Return JSON only:
 
 /**
  * Run judge panel to vote on extraction correctness.
- * Uses Borda count: each judge ranks A (original), B (critic corrections), AB (synthesis).
+ * Each judge emits a single vote (A/B/AB); tallied via weighted plurality
+ * with a bias toward A (the original extraction).
  */
 async function runJudgePanel(
   values: ExtractedValueForValidation[],
@@ -222,7 +223,7 @@ Return JSON only:
   // Run 3 judges in parallel
   const judgePromises = [1, 2, 3].map(async (judgeId) => {
     const result = await generateText({
-      model: openrouter("anthropic/claude-haiku-3"),
+      model: openrouter("anthropic/claude-haiku-4.5"),
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3 + judgeId * 0.1, // Slight variation for diversity
     });
@@ -241,10 +242,11 @@ Return JSON only:
 }
 
 /**
- * Tally Borda count from judge votes.
- * A=3 points, AB=2 points, B=1 point (preference for original).
+ * Tally judge votes via weighted plurality (not true Borda — judges emit a
+ * single vote, not a ranking). A=3, AB=2, B=1, biased toward the original
+ * extraction on ties.
  */
-function tallyBordaCount(votes: JudgeVote[]): "A" | "B" | "AB" {
+function tallyWeightedPlurality(votes: JudgeVote[]): "A" | "B" | "AB" {
   const scores = { A: 0, B: 0, AB: 0 };
   const points = { A: 3, AB: 2, B: 1 };
 
@@ -322,7 +324,7 @@ export async function runAdversarialValidation(
       const roundVotes = await runJudgePanel(values, criticOutput, constraintViolations);
       allVotes = [...allVotes, ...roundVotes];
 
-      const winner = tallyBordaCount(roundVotes);
+      const winner = tallyWeightedPlurality(roundVotes);
 
       if (winner === "A") {
         consecutiveAWins++;

@@ -60,6 +60,27 @@ export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
 ];
 
 /**
+ * Cash Flow Statement constraints.
+ * The universal identity: Net change in cash = Operating + Investing + Financing.
+ * FX effect on cash is sometimes a separate line; the existing checker ignores
+ * constraints where fewer than 2 terms match, so companies that don't report a
+ * standalone FX line are still covered.
+ */
+export const CASHFLOW_CONSTRAINTS: ArithmeticConstraint[] = [
+  {
+    name: "net_change_in_cash",
+    description: "Net Change in Cash = Operating CF + Investing CF + Financing CF",
+    terms: [
+      { labels: "Operating Activities|Actividades de Operación|Atividades Operacionais|Cash from Operations|Flujo de Operación|Cash Flow from Operating", coefficient: 1 },
+      { labels: "Investing Activities|Actividades de Inversión|Atividades de Investimento|Cash from Investing|Flujo de Inversión", coefficient: 1 },
+      { labels: "Financing Activities|Actividades de Financiamiento|Atividades de Financiamento|Cash from Financing|Flujo de Financiamiento", coefficient: 1 },
+    ],
+    resultLabel: "Net Change in Cash|Variación Neta de Efectivo|Variação do Caixa|Net Increase in Cash|Aumento Neto en Efectivo",
+    tolerance: 1,
+  },
+];
+
+/**
  * Balance Sheet constraints (Assets = Liabilities + Equity).
  */
 export const BALANCE_SHEET_CONSTRAINTS: ArithmeticConstraint[] = [
@@ -97,7 +118,7 @@ export function getConstraintsForStatement(
     case "balance":
       return BALANCE_SHEET_CONSTRAINTS;
     case "cashflow":
-      return []; // TODO: Add cash flow constraints
+      return CASHFLOW_CONSTRAINTS;
     default:
       return [];
   }

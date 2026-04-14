@@ -1,0 +1,10 @@
+pnpm-lock.yaml
+scripts/**/*.ts
+scripts/**/*.py
+scripts/**/__pycache__/
+src/lib/pdf/__pycache__/
+src/db/add-lren3-mappings.ts
+.firecrawl/
+.context/
+.omx/
+docs/
