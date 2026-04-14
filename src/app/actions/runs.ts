@@ -213,10 +213,14 @@ export async function approveValues(
       return run;
     }
 
+    // allowOverwrite so re-approves update the blob in place instead of
+    // throwing "blob already exists". Camila's flow: approve, download,
+    // find a typo, fix the override, re-approve — the new xlsx has to
+    // replace the old one under the same URL.
     const blob = await put(
       `output/${run.companyId}/${run.quarter}/${result.filename}`,
       result.buffer,
-      { access: "public" }
+      { access: "public", allowOverwrite: true }
     );
 
     // Store output URL on the run
