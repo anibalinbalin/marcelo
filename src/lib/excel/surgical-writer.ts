@@ -120,7 +120,8 @@ function buildCellNode(addr: string, value: number, styleAttr: string): string {
  *   - Shared string:            <c r="C3" t="s"><v>7</v></c>
  *   - Standalone formula:       <c r="C3"><f>A1+B1</f><v>42</v></c>
  *   - Shared formula clone:     <c r="C3"><f t="shared" si="0"/></c>  (safe)
- *   - Shared formula master:    <c r="C3"><f t="shared" ref="C3:C10" si="0">A1+B1</f>...</c>  (REJECTED)
+ *   - Shared formula, no clones: <c r="C3"><f t="shared" ref="C3" si="0">A1+B1</f>...</c>  (safe — no clones to orphan)
+ *   - Shared formula master:    <c r="C3"><f t="shared" ref="C3:C10" si="0">A1+B1</f>...</c>  (REJECTED — has clones)
  *
  * For all accepted shapes the result becomes:
  *   <c r="ADDR" {preserved-style}><v>VALUE</v></c>
@@ -144,13 +145,17 @@ function patchCellInSheet(
     const selfClosing = match[2] === "/>";
     const inner = selfClosing ? "" : (match[3] ?? "");
 
-    // Reject shared formula masters — overwriting them would break the clone
-    // chain that Excel relies on to render dependent cells.
-    const sharedMasterRe = /<f\b[^>]*\bt="shared"[^>]*\bref="/;
-    if (!selfClosing && sharedMasterRe.test(inner)) {
+    // Reject shared formula masters that span a range — overwriting them
+    // would break the clone chain Excel relies on to render dependent cells.
+    // Single-cell refs (ref="BO9", no colon) are degenerate shared formulas
+    // with zero clones; they behave like standalone formulas and are safe
+    // to overwrite. CENT's template has several of these — some tool wrote
+    // them with the shared marker even though nothing shares them.
+    const sharedMasterRangeRe = /<f\b[^>]*\bt="shared"[^>]*\bref="[^"]*:/;
+    if (!selfClosing && sharedMasterRangeRe.test(inner)) {
       return {
         xml: sheetXml,
-        error: `Cell ${addr} is a shared formula master — refusing to overwrite`,
+        error: `Cell ${addr} is a shared formula master with clones — refusing to overwrite`,
       };
     }
 
