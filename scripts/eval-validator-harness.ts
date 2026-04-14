@@ -33,6 +33,10 @@ import {
   type ExtractedValueForValidation,
 } from "../src/lib/validation/adversarial";
 import {
+  runValidation as runBasicValidation,
+  type ValidationInput,
+} from "../src/lib/validation/engine";
+import {
   INCOME_STATEMENT_CONSTRAINTS,
   labelMatches,
   type ArithmeticConstraint,
@@ -191,6 +195,7 @@ type RawRow = {
   confidence: string | number;
   validation_status: string | null;
   validation_message: string | null;
+  validation_sign: string | null;
   target_sheet: string;
 };
 
@@ -204,6 +209,7 @@ async function loadRunValues(
   company: string;
   quarter: string;
   values: ExtractedValueForValidation[];
+  signByValueId: Map<number, string | null>;
 }> {
   const meta = (await sql`
     select er.id, er.quarter, c.ticker
@@ -221,6 +227,7 @@ async function loadRunValues(
       ev.id,
       fm.source_label,
       fm.target_sheet,
+      fm.validation_sign,
       ev.extracted_value,
       ev.confidence,
       ev.validation_status,
@@ -240,10 +247,14 @@ async function loadRunValues(
     validationMessage: r.validation_message,
   }));
 
+  const signByValueId = new Map<number, string | null>();
+  for (const r of rows) signByValueId.set(r.id, r.validation_sign);
+
   return {
     company: meta[0].ticker ?? "unknown",
     quarter: meta[0].quarter,
     values,
+    signByValueId,
   };
 }
 
@@ -257,7 +268,10 @@ type EvalResult = {
   target: CorruptionTarget;
   description: string;
   triggered: boolean; // what shouldTriggerAdversarial would have said
-  status: "pass" | "needs_review" | "error";
+  basicStatus: "pass" | "warning" | "fail";
+  adversarialStatus: "pass" | "needs_review" | "error";
+  /** End-user outcome: basic fail OR adversarial needs_review/error → caught */
+  caught: boolean;
   roundsNeeded: number;
   violations: number;
   judgeVoteCount: number;
@@ -270,13 +284,34 @@ async function evalCase(
   runId: number,
   corruption: CorruptionKind
 ): Promise<EvalResult> {
-  const { company, quarter, values: clean } = await loadRunValues(sql, runId);
+  const { company, quarter, values: clean, signByValueId } = await loadRunValues(
+    sql,
+    runId
+  );
 
   const { values: corrupted, description, target } = applyCorruption(
     clean,
     corruption,
     INCOME_STATEMENT_CONSTRAINTS
   );
+
+  // Run basic validator first — this is what Camila's pipeline does before
+  // handing off to the adversarial layer. Sign flips, NaN, and confidence
+  // thresholds get caught here regardless of the LLM path.
+  const basicInputs: ValidationInput[] = corrupted.map((v) => ({
+    id: v.id,
+    extractedValue: v.extractedValue,
+    confidence: v.confidence,
+    validationSign: signByValueId.get(v.id) ?? null,
+    sourceLabel: v.sourceLabel,
+  }));
+  const basicResults = runBasicValidation(basicInputs);
+  // Aggregate basic status = worst among rows (fail > warning > pass)
+  const basicStatus: "pass" | "warning" | "fail" = basicResults.some((r) => r.status === "fail")
+    ? "fail"
+    : basicResults.some((r) => r.status === "warning")
+      ? "warning"
+      : "pass";
 
   const triggered = shouldTriggerAdversarial(corrupted);
 
@@ -285,6 +320,7 @@ async function evalCase(
   try {
     result = await runAdversarialValidation(corrupted, "income");
   } catch (err) {
+    const caught = basicStatus === "fail";
     return {
       runId,
       company,
@@ -293,7 +329,9 @@ async function evalCase(
       target,
       description,
       triggered,
-      status: "error",
+      basicStatus,
+      adversarialStatus: "error",
+      caught,
       roundsNeeded: 0,
       violations: 0,
       judgeVoteCount: 0,
@@ -303,6 +341,15 @@ async function evalCase(
   }
   const durationMs = Date.now() - started;
 
+  // Caught means the end user would have seen the corruption flagged.
+  // Basic fail is a hard catch; adversarial needs_review is a soft catch;
+  // adversarial error is treated as uncaught because it leaves the value
+  // in "pass" state in prod.
+  const caught =
+    basicStatus === "fail" ||
+    result.status === "needs_review" ||
+    result.status === "error";
+
   return {
     runId,
     company,
@@ -311,7 +358,9 @@ async function evalCase(
     target,
     description,
     triggered,
-    status: result.status,
+    basicStatus,
+    adversarialStatus: result.status,
+    caught,
     roundsNeeded: result.roundsNeeded,
     violations: result.constraintViolations.length,
     judgeVoteCount: result.judgeVotes.length,
@@ -323,16 +372,17 @@ async function evalCase(
 
 function printResultsTable(results: EvalResult[]): void {
   console.log(
-    "\n| run | company | corruption | target | trigger? | status | violations | rounds | votes | duration | detail |"
+    "\n| run | company | corruption | target | trigger? | basic | adv | caught | violations | rounds | votes | duration | detail |"
   );
   console.log(
-    "|-----|---------|------------|--------|----------|--------|------------|--------|-------|----------|--------|"
+    "|-----|---------|------------|--------|----------|-------|-----|--------|------------|--------|-------|----------|--------|"
   );
   for (const r of results) {
     const detail = r.errorMsg ? `ERROR: ${r.errorMsg}` : r.description;
-    const status = r.status === "error" ? `❌ error` : r.status;
+    const adv = r.adversarialStatus === "error" ? `❌ error` : r.adversarialStatus;
+    const caughtMark = r.caught ? "✅" : "·";
     console.log(
-      `| ${r.runId} | ${r.company} | ${r.corruption} | ${r.target} | ${r.triggered ? "yes" : "no"} | ${status} | ${r.violations} | ${r.roundsNeeded} | ${r.judgeVoteCount} | ${r.durationMs}ms | ${detail} |`
+      `| ${r.runId} | ${r.company} | ${r.corruption} | ${r.target} | ${r.triggered ? "yes" : "no"} | ${r.basicStatus} | ${adv} | ${caughtMark} | ${r.violations} | ${r.roundsNeeded} | ${r.judgeVoteCount} | ${r.durationMs}ms | ${detail} |`
     );
   }
 }
@@ -345,46 +395,44 @@ function printSummary(results: EvalResult[]): void {
     byCorruption.set(r.corruption, list);
   }
 
-  console.log("\n\n## Summary — catch rate per corruption type");
-  console.log("\n| corruption | n | caught (needs_review) | errors | pass | catch rate |");
-  console.log("|------------|---|------------------------|--------|------|------------|");
+  console.log("\n\n## Summary — catch rate per corruption type (end-user visible)");
+  console.log("\n| corruption | n | caught | via basic | via adv | pass | catch rate |");
+  console.log("|------------|---|--------|-----------|---------|------|------------|");
 
   for (const kind of ALL_CORRUPTIONS) {
     const cases = byCorruption.get(kind) ?? [];
     if (cases.length === 0) continue;
-    const caught = cases.filter((r) => r.status === "needs_review").length;
-    const errors = cases.filter((r) => r.status === "error").length;
-    const passed = cases.filter((r) => r.status === "pass").length;
+    const caught = cases.filter((r) => r.caught).length;
+    const viaBasic = cases.filter((r) => r.basicStatus === "fail").length;
+    const viaAdv = cases.filter(
+      (r) => r.basicStatus !== "fail" &&
+        (r.adversarialStatus === "needs_review" || r.adversarialStatus === "error")
+    ).length;
+    const passed = cases.filter((r) => !r.caught).length;
     const rate = ((caught / cases.length) * 100).toFixed(0);
     console.log(
-      `| ${kind} | ${cases.length} | ${caught} | ${errors} | ${passed} | ${rate}% |`
+      `| ${kind} | ${cases.length} | ${caught} | ${viaBasic} | ${viaAdv} | ${passed} | ${rate}% |`
     );
   }
 
-  // Break out catch rate by corruption target. "constrained" means the
-  // harness corrupted a row that's an input to an arithmetic constraint.
-  // "uncovered" means the run had no constraint-adjacent row and fell back
-  // to first-non-zero. Uncovered catch rate is a floor on LLM-only detection;
-  // constrained catch rate is the real validator capability.
   console.log("\n## Summary — catch rate by corruption target");
-  console.log("\n| target | n | caught | errors | pass | catch rate |");
-  console.log("|--------|---|--------|--------|------|------------|");
+  console.log("\n| target | n | caught | pass | catch rate |");
+  console.log("|--------|---|--------|------|------------|");
   for (const target of ["constrained", "uncovered"] as const) {
     const cases = results.filter((r) => r.target === target && r.corruption !== "clean");
     if (cases.length === 0) continue;
-    const caught = cases.filter((r) => r.status === "needs_review").length;
-    const errors = cases.filter((r) => r.status === "error").length;
-    const passed = cases.filter((r) => r.status === "pass").length;
+    const caught = cases.filter((r) => r.caught).length;
+    const passed = cases.filter((r) => !r.caught).length;
     const rate = ((caught / cases.length) * 100).toFixed(0);
     console.log(
-      `| ${target} | ${cases.length} | ${caught} | ${errors} | ${passed} | ${rate}% |`
+      `| ${target} | ${cases.length} | ${caught} | ${passed} | ${rate}% |`
     );
   }
 
-  // False-positive rate = clean cases that were flagged needs_review
+  // False-positive rate = clean cases that would be flagged
   const clean = byCorruption.get("clean") ?? [];
   if (clean.length > 0) {
-    const falsePos = clean.filter((r) => r.status === "needs_review").length;
+    const falsePos = clean.filter((r) => r.caught).length;
     console.log(
       `\n**False positive rate on clean runs:** ${falsePos}/${clean.length} = ${((falsePos / clean.length) * 100).toFixed(0)}%`
     );
@@ -432,7 +480,7 @@ async function main() {
       try {
         const r = await evalCase(sql, runId, corruption);
         results.push(r);
-        process.stderr.write(`${r.status} (${r.durationMs}ms)\n`);
+        process.stderr.write(`${r.caught ? "caught" : "miss"} basic=${r.basicStatus} adv=${r.adversarialStatus} (${r.durationMs}ms)\n`);
       } catch (err) {
         process.stderr.write(
           `FAILED: ${err instanceof Error ? err.message : String(err)}\n`

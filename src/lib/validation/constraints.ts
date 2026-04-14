@@ -62,7 +62,12 @@ export const INCOME_STATEMENT_CONSTRAINTS: ArithmeticConstraint[] = [
       // Put "Net Revenue" before "Revenue" so label matching prefers the
       // specific line when both exist (CENT has both Gross revenue and
       // Net revenue; only Net revenue - COGS equals Gross profit).
-      { labels: "Net Revenue|Receita Líquida|Revenue|Ingresos|Receita", flow: "inflow" },
+      //
+      // Bare "Ingresos" is intentionally excluded — prefix matching made
+      // it collide with "Ingresos por intereses" (BANREGIO bank line) and
+      // "Ingresos financieros" (ENEL financial income). Use the qualified
+      // "Ingresos de actividades ordinarias" form instead.
+      { labels: "Net Revenue|Receita Líquida|Revenue|Ingresos de Actividades Ordinarias|Ingresos de Operación|Receita", flow: "inflow" },
       { labels: "Cost of Sales|Costo de Ventas|Custo|COGS", flow: "outflow" },
     ],
     resultLabel: "Gross Profit|Utilidad Bruta|Lucro Bruto",

@@ -168,3 +168,127 @@ Full per-case table lives in `/tmp/eval-output.md` from the run at
 `2026-04-14T10:03:56Z`. Corpus: CENT run 29, BANREGIO run 16, NTCO3
 run 49 (fresh), ENELCHILE run 12. 24 cases total, 155s wall time, 42
 judge votes.
+
+---
+
+## Second run — after revenue pattern fix + basic validator merge
+
+After the first 2026-04-14 baseline flagged two quick wins, shipped in
+the same commit:
+
+1. Dropped bare `"Ingresos"` from the revenue pattern in
+   `constraints.ts`. Replaced with `"Ingresos de Actividades
+   Ordinarias|Ingresos de Operación"`.
+2. Harness now runs the basic validator (`src/lib/validation/engine.ts`)
+   alongside `runAdversarialValidation` and treats the case as caught if
+   EITHER layer flags it. This matches what Camila actually sees in the
+   review UI — the basic validator's sign/NaN/low-confidence checks
+   run in prod before adversarial, so the harness should measure the
+   composite outcome.
+
+### Headline numbers
+
+| metric | post-W1.7 | first 04-14 | **second 04-14** |
+|---|---|---|---|
+| False positive rate | 0% | 0% | **0%** |
+| Error rate | 0% | 0% | **0%** |
+| Sign flip catch rate | 25% | 0% | **75%** |
+| Decimal shift catch rate | 0% | 25% | **25%** |
+| Row swap catch rate | 50% | 50% | **75%** |
+| Magnitude ×1000 catch rate | 0% | 50% | **50%** |
+| Zero wipe catch rate | 0% | 25% | **25%** |
+
+Aggregate non-clean catch rate: **50%** (up from 30%, up from 25%
+post-W1.7). Still 0% false positives.
+
+### Where the wins came from
+
+**Basic validator caught 5 of 10 non-CENT corruptions:**
+
+| run | corruption | mechanism |
+|---|---|---|
+| BANREGIO | sign_flip | `Gastos de Operación` positive, validation_sign=negative → fail |
+| BANREGIO | row_swap | expense row got positive value after swap → fail |
+| NTCO3 | sign_flip | `COGS` positive, validation_sign=negative → fail |
+| ENEL | sign_flip | `Ingresos financieros` negative, validation_sign=positive → fail |
+| ENEL | row_swap | swap produced sign mismatch → fail |
+
+This is the point of promoting basic validation: every row whose
+mapping has `validation_sign` populated now has a cheap, deterministic
+sign guard that runs regardless of whether the adversarial gate fires.
+120 of 167 active mappings (72%) have `validation_sign`. The rest are
+the ~47 mappings that were seeded without a sign hint — low-hanging
+follow-up.
+
+**Adversarial path caught 5 cases** (all of CENT's non-clean except
+sign_flip, plus ENEL's magnitude_1000x and row_swap). That's the
+rule-based constraint mechanism working as designed on CENT, plus the
+LLM critic earning its keep on ENEL.
+
+### CENT sign_flip is the remaining miss
+
+CENT's `Net revenue` mapping has `validation_sign = null` (not seeded
+when the mapping was created), so the basic sign check can't fire. The
+rule-based gross_profit constraint can't fire either — `flow: "inflow"`
+uses `+|value|`, which absorbs the flip. So CENT sign_flip falls through
+to the LLM critic, which returns "pass" because the debate team doesn't
+see an obvious arithmetic breakage.
+
+**Fix:** one-row DB update to populate `validation_sign='positive'` on
+the CENT Net revenue mapping (and any other commonly-critical row
+without a sign hint). Not shipped in this commit because it's analyst
+data work, not code, and `validation_sign` assignment for each line is
+an analyst-level decision.
+
+### ENEL target changed from "constrained" to "uncovered"
+
+With the bare `"Ingresos"` alternative removed from the revenue pattern,
+ENEL's `Ingresos financieros` no longer prefix-matches any constraint
+term. The picker now falls through to first-non-zero, lands on the same
+row (it's the first mapping by ID), and the target field says "uncovered".
+Interestingly, ENEL's catch rate went **up** from 33% to 50% because
+the basic validator's sign check compensates — the picker's classification
+is more honest without the coverage changing.
+
+### What's still missing
+
+Three corruptions are still hard for the current validator:
+
+- **decimal_shift (25%)** — small magnitude shifts (÷10) rarely break
+  constraint arithmetic above the 1% tolerance floor unless the victim
+  is a large input. Only CENT catches it, via the gross_profit
+  violation.
+- **magnitude_1000x (50%)** — caught when the victim is a constraint
+  input large enough to break arithmetic. CENT catches it via constraint;
+  ENEL catches it via LLM. BANREGIO and NTCO3 miss because no constraint
+  fires.
+- **zero_wipe (25%)** — only CENT catches. A zero value is a legitimate
+  state for many rows, so the basic validator doesn't flag it, and
+  constraint arithmetic tolerates it unless the zero is a significant
+  term.
+
+The honest ceiling without expanding constraint coverage is around 60%
+aggregate catch rate. To go higher, add industry-specific constraint
+sets (banking, retail, utilities) so BANREGIO / NTCO3 / ENEL each have
+a rule-based layer that fires. That's the task W3 could address, but
+it's constraint dictionary expansion rather than adversarial fidelity —
+still not W3.1.
+
+### Verdict (updated)
+
+- **W3.1 still deprioritized.** The critic fidelity upgrade would raise
+  the ~50% adversarial-path ceiling on ENEL-like runs but wouldn't help
+  BANREGIO or NTCO3 where `shouldTriggerAdversarial` returns false on
+  clean high-confidence runs.
+- **Next highest leverage:** populate `validation_sign` on the ~47
+  missing mappings. Almost free (analyst data work), closes most of
+  the remaining sign flip gap.
+- **Second highest leverage:** industry-specific constraint sets. Not
+  in scope for the current eval series.
+
+### Second raw eval output
+
+Full per-case table lives in `/tmp/eval-output-v2.md` from the run at
+`2026-04-14T10:~` (appended to this doc). Corpus: CENT run 29, BANREGIO
+run 16, NTCO3 run 50 (fresh), ENELCHILE run 12. 24 cases, 160s wall
+time, 39 judge votes.
