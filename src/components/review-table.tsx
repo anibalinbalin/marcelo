@@ -22,6 +22,7 @@ export interface ExtractedValueWithMapping {
   analystOverride: string | null;
   sourceLabel: string;
   sourceSection: string | null;
+  targetCellAddress: string;
   targetSheet: string;
   targetRow: number;
 }
@@ -190,6 +191,7 @@ export function ReviewTable({
       <TableHeader>
         <TableRow className="border-zinc-800">
           <TableHead className="text-xs">Field Name</TableHead>
+          <TableHead className="text-xs">Target Cell</TableHead>
           <TableHead className="text-xs">Source Section</TableHead>
           <TableHead className="text-xs">Extracted Value</TableHead>
           <TableHead className="text-xs">Confidence</TableHead>
@@ -202,6 +204,9 @@ export function ReviewTable({
           <TableRow key={v.id} className="border-zinc-800/50">
             <TableCell className="text-sm font-medium">
               {v.sourceLabel}
+            </TableCell>
+            <TableCell className="font-[family-name:var(--font-geist-mono)] text-xs text-muted-foreground">
+              {v.targetCellAddress}
             </TableCell>
             <TableCell className="text-sm text-muted-foreground">
               {v.sourceSection ?? "--"}

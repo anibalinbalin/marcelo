@@ -313,13 +313,36 @@ function rewriteOne(
       };
     }
     const cloneAddrs = rangeCells.slice(1);
-    const survivingClones = cloneAddrs.filter(a => !writeAddrSet.has(a));
+    // A "true orphan clone" carries <f t="shared" si="X"/> pointing at THIS
+    // master. Cells inside the ref range that hold their own standalone
+    // formula (e.g. CM89 = `<f>-CM130</f>`) are NOT clones of si=X in
+    // Excel's eyes — they just happen to live inside the rectangle. Skip
+    // them; they need no promotion. Same for cells we're about to write.
+    const orphanClones = cloneAddrs.filter(a => {
+      if (writeAddrSet.has(a)) return false;
+      const c = findCell(xml, a);
+      if (!c || c.selfClosing) return false;
+      const cf = parseFormula(c.inner);
+      if (!cf) return false;
+      return cf.type === "shared" && cf.si === f.si;
+    });
 
     let nextXml = xml;
 
-    if (survivingClones.length > 0) {
-      const newMasterAddr = survivingClones[0];
-      const lastClone = survivingClones[survivingClones.length - 1];
+    if (orphanClones.length > 0) {
+      // Orphan clones must be contiguous to fold into one new master range.
+      // If a non-orphan cell (own formula) sits between them, we'd need two
+      // masters — hard-error rather than silently lose formulas.
+      const firstIdx = cloneAddrs.indexOf(orphanClones[0]);
+      const lastIdx = cloneAddrs.indexOf(orphanClones[orphanClones.length - 1]);
+      if (lastIdx - firstIdx + 1 !== orphanClones.length) {
+        return {
+          xml,
+          error: `${sheetName}!${addr}: orphan clones for si=${f.si} are non-contiguous (${orphanClones.join(",")})`,
+        };
+      }
+      const newMasterAddr = orphanClones[0];
+      const lastClone = orphanClones[orphanClones.length - 1];
       const newRef = newMasterAddr === lastClone ? newMasterAddr : `${newMasterAddr}:${lastClone}`;
 
       const oldParts = splitAddress(addr);

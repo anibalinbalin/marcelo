@@ -1,6 +1,7 @@
 import { getRun, getExtractedValues } from "@/app/actions/runs";
 import { getCompany } from "@/app/actions/companies";
 import { getMappings } from "@/app/actions/mappings";
+import { getTargetCellAddress } from "@/lib/target-cell";
 import { notFound } from "next/navigation";
 import { ReviewClient } from "./review-client";
 
@@ -49,6 +50,15 @@ export default async function RunReviewPage({ params }: Props) {
         sourceSection: mapping.sourceSection,
         targetSheet: mapping.targetSheet,
         targetRow: mapping.targetRow,
+        targetCellAddress: getTargetCellAddress({
+          baseQuarter: mapping.baseQuarter,
+          colMode: mapping.colMode,
+          quarter: run.quarter,
+          targetColBase: mapping.targetColBase,
+          targetColStep: mapping.targetColStep,
+          targetRow: mapping.targetRow,
+          targetSheet: mapping.targetSheet,
+        }),
       };
     })
     .filter((v) => v !== null);
