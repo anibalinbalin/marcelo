@@ -1,6 +1,7 @@
 export const LREN3_NAME = "Lojas Renner";
 export const LREN3_TICKER = "LREN3";
 export const LREN3_TEMPLATE_PATH = "public/camila/LREN3 OK.xlsx";
+export const LREN3_EXPECTED_MAPPING_COUNT = 80;
 
 export interface Lren3MappingDefinition {
   colMode: "quarterly_offset";
@@ -59,6 +60,7 @@ export const LREN3_PROJ_MAPPINGS: readonly Lren3MappingDefinition[] = [
   makeMapping(PROJ, 13, "Income Statement", "Depreciation and Amortization", "negative"),
   makeMapping(PROJ, 14, "Income Statement", "Losses on Receivables, Net", "negative"),
   makeMapping(PROJ, 15, "Income Statement", "Other Operating Income", null),
+  makeMapping(PROJ, 18, "Income Statement", "Financial Result", null, 53),
   makeMapping(PROJ, 23, "Income Statement", "Income and Social Contribution Taxes", "negative"),
   makeMapping(PROJ, 32, "Income Statement", "Equity Pick-ups", null),
   makeMapping(PROJ, 90, "Balance Sheet", "Cash & Cash Equivalents", "positive"),
@@ -69,6 +71,7 @@ export const LREN3_PROJ_MAPPINGS: readonly Lren3MappingDefinition[] = [
   makeMapping(PROJ, 95, "Balance Sheet", "Other assets", "positive", 17),
   makeMapping(PROJ, 99, "Balance Sheet", "Recoverable Taxes", "positive", 21),
   makeMapping(PROJ, 100, "Balance Sheet", "Deferred Taxes", "positive", 23),
+  makeMapping(PROJ, 101, "Balance Sheet", "Other assets", "positive", 24),
   makeMapping(PROJ, 103, "Balance Sheet", "Investments", "positive", 29),
   makeMapping(PROJ, 104, "Balance Sheet", "Property and Equipment", "positive", 30),
   makeMapping(PROJ, 105, "Balance Sheet", "Right of use", "positive", 31),
@@ -116,6 +119,23 @@ export const LREN3_FAT_MAPPINGS: readonly Lren3MappingDefinition[] = [
   makeMapping(FAT, 190, "EBITDA", "Financial Expenses for Leasing (IFRS16) (**)", "negative"),
   makeMapping(FAT, 192, "EBITDA", "Other expenses", null),
   makeMapping(FAT, 205, "EBITDA", "Adjusted EBITDA from Retailing Operation (pre IFRS 16)", "positive"),
+  makeMapping(FAT, 223, "Operating Data", "Quantity of stores - Renner", "positive", 30),
+  makeMapping(FAT, 225, "Operating Data", "Average selling area of the period - Renner (thousand sq. meters)*", "positive", 33),
+  makeMapping(FAT, 227, "Operating Data", "Retailing net revenues - Renner (R$ MM)", "positive", 34),
+  makeMapping(FAT, 229, "Operating Data", "Gross margin - Renner (%)", "positive", 36),
+  makeMapping(FAT, 235, "Operating Data", "Quantity of stores - Youcom", "positive", 52),
+  makeMapping(FAT, 237, "Operating Data", "Average selling area of the period - Youcom (thousand sq. meters)*", "positive", 55),
+  makeMapping(FAT, 239, "Operating Data", "Retailing net revenues - Youcom (R$ MM)", "positive", 56),
+  makeMapping(FAT, 241, "Operating Data", "Gross margin - Youcom (%)", "positive", 58),
+  makeMapping(FAT, 245, "Operating Data", "Quantity of stores - Camicado", "positive", 41),
+  makeMapping(FAT, 247, "Operating Data", "Average selling area of the period - Camicado (thousand sq. meters)*", "positive", 44),
+  makeMapping(FAT, 249, "Operating Data", "Retailing net revenues - Camicado (R$ MM)", "positive", 45),
+  makeMapping(FAT, 251, "Operating Data", "Gross margin - Camicado (%)", "positive", 47),
+  makeMapping(FAT, 300, "Income Statement", "Same Store Sales (%)", "positive", 11),
+  makeMapping(FAT, 368, "CAPEX", "New stores", "positive", 8),
+  makeMapping(FAT, 383, "CAPEX", "Remodelling of installations", "positive", 9),
+  makeMapping(FAT, 394, "CAPEX", "IT equipament & systems", "positive", 10),
+  makeMapping(FAT, 400, "CAPEX", "Logistics + Others Investments", "positive"),
 ] as const;
 
 export const LREN3_CANONICAL_MAPPINGS: readonly Lren3MappingDefinition[] = [

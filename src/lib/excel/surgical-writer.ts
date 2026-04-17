@@ -160,6 +160,7 @@ function countFormulasInSheet(sheetXml: string): number {
 // ── Cell locator ─────────────────────────────────────────────────────────────
 
 interface CellMatch {
+  addr: string;
   full: string;       // entire <c ...> ... </c> (or self-closed) substring
   index: number;      // position of `full` in the parent xml
   attrs: string;      // raw attribute text inside the opening tag
@@ -174,6 +175,7 @@ function findCell(xml: string, addr: string): CellMatch | null {
   const m = xml.match(re);
   if (!m || m.index === undefined) return null;
   return {
+    addr,
     full: m[0],
     index: m.index,
     attrs: m[1],
@@ -189,6 +191,13 @@ function stylePreserve(attrs: string): string {
 
 function buildLiteralCell(addr: string, value: number, attrs: string): string {
   return `<c r="${addr}"${stylePreserve(attrs)}><v>${value}</v></c>`;
+}
+
+function replaceCellAddress(node: string, fromAddr: string, toAddr: string): string {
+  return node.replace(
+    new RegExp(`\\br="${escapeRegex(fromAddr)}"`),
+    `r="${toAddr}"`,
+  );
 }
 
 // ── Formula element parsing ──────────────────────────────────────────────────
@@ -221,6 +230,115 @@ function parseFormula(inner: string): FormulaInfo | null {
     si: siM ? siM[1] : undefined,
     ref: refM ? refM[1] : undefined,
   };
+}
+
+interface SharedFormulaMaster {
+  addr: string;
+  body: string;
+}
+
+function buildSharedFormulaMasterMap(sheetXml: string): Map<string, SharedFormulaMaster> {
+  const masters = new Map<string, SharedFormulaMaster>();
+  const cellIter = sheetXml.matchAll(/<c\b([^>]*?\br="([A-Z]+\d+)"[^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g);
+  for (const match of cellIter) {
+    const addr = match[2];
+    const inner = match[3] ?? "";
+    if (!inner.includes("<f")) continue;
+    const formula = parseFormula(inner);
+    if (!formula || formula.type !== "shared" || !formula.si || !formula.body) continue;
+    masters.set(formula.si, { addr, body: formula.body });
+  }
+  return masters;
+}
+
+function buildStandaloneFormulaCell(
+  addr: string,
+  attrs: string,
+  formulaBody: string,
+): string {
+  return `<c r="${addr}"${stylePreserve(attrs)}><f>${formulaBody}</f></c>`;
+}
+
+function cloneCellToAddress(
+  cell: CellMatch,
+  targetAddr: string,
+  sharedMasters: Map<string, SharedFormulaMaster>,
+): string {
+  if (cell.selfClosing || !cell.inner.includes("<f")) {
+    return replaceCellAddress(cell.full, cell.addr, targetAddr);
+  }
+
+  const formula = parseFormula(cell.inner);
+  if (!formula) {
+    return replaceCellAddress(cell.full, cell.addr, targetAddr);
+  }
+
+  let formulaBody = formula.body;
+  if (!formulaBody && formula.type === "shared" && formula.si) {
+    const master = sharedMasters.get(formula.si);
+    if (master) {
+      const sourceParts = splitAddress(cell.addr);
+      const masterParts = splitAddress(master.addr);
+      const colDelta =
+        columnLetterToNumber(sourceParts.col) - columnLetterToNumber(masterParts.col);
+      const rowDelta = sourceParts.row - masterParts.row;
+      formulaBody = shiftFormula(master.body, colDelta, rowDelta);
+    }
+  }
+
+  if (!formulaBody) {
+    return replaceCellAddress(cell.full, cell.addr, targetAddr);
+  }
+
+  const sourceParts = splitAddress(cell.addr);
+  const targetParts = splitAddress(targetAddr);
+  const colDelta =
+    columnLetterToNumber(targetParts.col) - columnLetterToNumber(sourceParts.col);
+  const rowDelta = targetParts.row - sourceParts.row;
+  const shiftedBody = shiftFormula(formulaBody, colDelta, rowDelta);
+  return buildStandaloneFormulaCell(targetAddr, cell.attrs, shiftedBody);
+}
+
+function replaceOrInsertCell(xml: string, addr: string, newNode: string): string {
+  const existing = findCell(xml, addr);
+  if (existing) {
+    return xml.slice(0, existing.index) + newNode + xml.slice(existing.index + existing.full.length);
+  }
+  return insertCellNode(xml, addr, newNode);
+}
+
+function clonePreviousColumn(
+  sheetXml: string,
+  targetCol: number,
+): string {
+  if (targetCol <= 1) return sheetXml;
+
+  const sourceCol = columnNumberToLetter(targetCol - 1);
+  const targetColLetter = columnNumberToLetter(targetCol);
+  const sharedMasters = buildSharedFormulaMasterMap(sheetXml);
+  const sourceCellRe = new RegExp(
+    `<c\\b([^>]*?\\br="(${escapeRegex(sourceCol)}\\d+)"[^>]*)(/>|>([\\s\\S]*?)</c>)`,
+    "g",
+  );
+
+  let xml = sheetXml;
+  const sourceCells = Array.from(xml.matchAll(sourceCellRe)).map((match) => ({
+    addr: match[2],
+    full: match[0],
+    index: match.index ?? 0,
+    attrs: match[1],
+    selfClosing: match[3] === "/>",
+    inner: match[3] === "/>" ? "" : (match[4] ?? ""),
+  })) as CellMatch[];
+
+  for (const cell of sourceCells) {
+    const { row } = splitAddress(cell.addr);
+    const targetAddr = `${targetColLetter}${row}`;
+    const cloned = cloneCellToAddress(cell, targetAddr, sharedMasters);
+    xml = replaceOrInsertCell(xml, targetAddr, cloned);
+  }
+
+  return xml;
 }
 
 // ── Per-sheet rewrite ────────────────────────────────────────────────────────
@@ -416,10 +534,12 @@ function promoteSharedClone(
 // ── Cell insertion (for addresses that don't yet exist) ──────────────────────
 
 function insertNewCell(xml: string, addr: string, value: number): string {
+  return insertCellNode(xml, addr, `<c r="${addr}"><v>${value}</v></c>`);
+}
+
+function insertCellNode(xml: string, addr: string, newCell: string): string {
   const rowNum = parseInt(addr.match(/\d+$/)?.[0] ?? "0", 10);
   if (!rowNum) throw new Error(`Could not parse row number from ${addr}`);
-
-  const newCell = `<c r="${addr}"><v>${value}</v></c>`;
   const rowRe = new RegExp(
     `<row\\b([^>]*?\\br="${rowNum}"[^>]*?)(/>|>([\\s\\S]*?)</row>)`,
   );
@@ -540,8 +660,12 @@ export async function writeBlueValues(
       errors.push(`Worksheet file ${path} missing from archive`);
       continue;
     }
-    const xml = await f.async("string");
+    let xml = await f.async("string");
     const sheetName = pathToSheet.get(path) ?? path;
+    const targetCols = [...new Set(writes.map((write) => write.col))].sort((a, b) => a - b);
+    for (const targetCol of targetCols) {
+      xml = clonePreviousColumn(xml, targetCol);
+    }
     const res = patchSheet(xml, sheetName, writes);
     for (const err of res.errors) errors.push(err);
     if (res.demoted.size > 0) anyDemoted = true;

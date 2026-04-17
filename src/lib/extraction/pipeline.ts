@@ -14,6 +14,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { extractPdfTables, type PdfSection } from "@/lib/pdf/extract";
 import { extractPdfText, type ParsedLine } from "@/lib/pdf/extract-text";
 import { extractPdfVision } from "@/lib/pdf/extract-vision";
+import { getWorkbookSheetNames } from "@/lib/excel/workbook-sheets";
 import {
   runValidation,
   runAdversarialValidation,
@@ -247,6 +248,46 @@ function getRealValueAtIndex(values: number[], colIndex: number): number | null 
   return realValues[colIndex] ?? null;
 }
 
+function lookupExcelLabelValue(
+  labelMap: Map<string, number>,
+  sourceLabel: string,
+): number | null {
+  const normalized = sourceLabel.toLowerCase().trim();
+
+  const direct = labelMap.get(normalized);
+  if (direct !== undefined) return direct;
+
+  if (normalized.includes(" + ")) {
+    const parts = normalized
+      .split(" + ")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length > 1) {
+      let sum = 0;
+      for (const part of parts) {
+        const partValue = lookupExcelLabelValue(labelMap, part);
+        if (partValue === null) return null;
+        sum += partValue;
+      }
+      return sum;
+    }
+  }
+
+  let bestValue: number | null = null;
+  let bestDiff = Infinity;
+  for (const [key, value] of labelMap) {
+    if (key.includes(normalized) || normalized.includes(key)) {
+      const diff = Math.abs(key.length - normalized.length);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestValue = value;
+      }
+    }
+  }
+
+  return bestValue;
+}
+
 /**
  * Match a label against extracted text lines from an IFRS PDF.
  *
@@ -414,19 +455,7 @@ async function extractFromExcelPython(
 
         // Fall back to label matching
         if (value === null) {
-          const normalized = mapping.sourceLabel.toLowerCase().trim();
-          value = labelMap[normalized] ?? null;
-
-          // Fuzzy match fallback
-          if (value === null) {
-            let bestDiff = Infinity;
-            for (const [k, v] of Object.entries(labelMap)) {
-              if (k.includes(normalized) || normalized.includes(k)) {
-                const diff = Math.abs(k.length - normalized.length);
-                if (diff < bestDiff) { bestDiff = diff; value = v; }
-              }
-            }
-          }
+          value = lookupExcelLabelValue(new Map(Object.entries(labelMap)), mapping.sourceLabel);
         }
 
         if (value === null) {
@@ -618,23 +647,7 @@ async function extractFromExcel(
     const labelMap = sheetCache.get(cacheKey);
     if (!labelMap || labelMap.size === 0) continue;
 
-    const normalized = mapping.sourceLabel.toLowerCase().trim();
-
-    // Try exact match first, then contains match
-    let value: number | null = labelMap.get(normalized) ?? null;
-    if (value === null) {
-      // Contains match — find the entry with the smallest length difference
-      let bestDiff = Infinity;
-      for (const [key, val] of labelMap) {
-        if (key.includes(normalized) || normalized.includes(key)) {
-          const diff = Math.abs(key.length - normalized.length);
-          if (diff < bestDiff) {
-            bestDiff = diff;
-            value = val;
-          }
-        }
-      }
-    }
+    const value = lookupExcelLabelValue(labelMap, mapping.sourceLabel);
 
     if (value === null) {
       errors.push(`No match for "${mapping.sourceLabel}" in ${mapping.sourceSection}::${mapping.sourceCol}`);
@@ -761,6 +774,39 @@ export async function runExtractionPipeline(runId: number): Promise<ExtractionRe
     fileBuffer[0] === 0x25; // %PDF magic byte
 
   if (!isPdf) {
+    const workbookSheets = await getWorkbookSheetNames(fileBuffer);
+    if (workbookSheets && workbookSheets.length > 0) {
+      const expectedSheets = [
+        ...new Set(
+          mappings
+            .map((mapping) => mapping.sourceSection)
+            .filter((section): section is string => Boolean(section)),
+        ),
+      ];
+
+      const missingSheets = expectedSheets.filter(
+        (sheet) => !workbookSheets.includes(sheet),
+      );
+
+      if (missingSheets.length > 0) {
+        const hasTemplateLikeSheets =
+          workbookSheets.includes("PROJ") ||
+          workbookSheets.includes("FAT") ||
+          workbookSheets.includes("RESUMO");
+        const likelyWrongWorkbook = hasTemplateLikeSheets &&
+          expectedSheets.some((sheet) => !workbookSheets.includes(sheet));
+
+        const hint = likelyWrongWorkbook
+          ? " It looks like you uploaded the populated/template workbook instead of the source workbook."
+          : "";
+
+        throw new Error(
+          `Source workbook is missing required sheet(s): ${missingSheets.join(", ")}. ` +
+            `Available sheet(s): ${workbookSheets.join(", ")}.${hint}`,
+        );
+      }
+    }
+
     // Excel source extraction — read values from a source spreadsheet
     return extractFromExcel(fileBuffer, mappings, runId, run.companyId!, errors);
   }
