@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon, SparklesIcon, XIcon } from "lucide-react";
 
 const POLL_INTERVAL_MS = 60_000;
+const SEEN_VERSION_KEY = "changelog-seen-version";
 
 type VersionInfo = { version: string; sha: string };
+type ChangelogEntry = { version: string; changes: string[] };
 
 async function fetchVersion(): Promise<VersionInfo | null> {
   try {
@@ -19,9 +21,23 @@ async function fetchVersion(): Promise<VersionInfo | null> {
   }
 }
 
+async function fetchChangelog(): Promise<ChangelogEntry[]> {
+  try {
+    const res = await fetch("/changelog.json", { cache: "no-store" });
+    if (!res.ok) return [];
+    return (await res.json()) as ChangelogEntry[];
+  } catch {
+    return [];
+  }
+}
+
 export function VersionWatcher() {
   const [current, setCurrent] = useState<VersionInfo | null>(null);
   const [latest, setLatest] = useState<VersionInfo | null>(null);
+  const [changelogEntry, setChangelogEntry] = useState<ChangelogEntry | null>(
+    null,
+  );
+  const [dismissed, setDismissed] = useState(false);
   const initialRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -32,6 +48,15 @@ export function VersionWatcher() {
       if (cancelled || !v) return;
       initialRef.current = v.sha;
       setCurrent(v);
+
+      const seenVersion = localStorage.getItem(SEEN_VERSION_KEY);
+      if (seenVersion !== v.version) {
+        const entries = await fetchChangelog();
+        const entry = entries.find((e) => e.version === v.version);
+        if (entry && !cancelled) {
+          setChangelogEntry(entry);
+        }
+      }
     })();
 
     const id = setInterval(async () => {
@@ -46,10 +71,20 @@ export function VersionWatcher() {
     };
   }, []);
 
+  function dismissChangelog() {
+    if (current) {
+      localStorage.setItem(SEEN_VERSION_KEY, current.version);
+    }
+    setDismissed(true);
+    setChangelogEntry(null);
+  }
+
   if (!current) return null;
 
   const updateAvailable =
-    latest !== null && initialRef.current !== null && latest.sha !== initialRef.current;
+    latest !== null &&
+    initialRef.current !== null &&
+    latest.sha !== initialRef.current;
 
   if (updateAvailable) {
     return (
@@ -62,6 +97,36 @@ export function VersionWatcher() {
         <span>New version available - click to refresh</span>
         <span className="font-mono opacity-80">v{latest?.version}</span>
       </button>
+    );
+  }
+
+  if (changelogEntry && !dismissed) {
+    return (
+      <>
+        <div className="fixed bottom-3 left-3 z-50 w-80 rounded-lg border border-white/10 bg-zinc-900/95 p-4 shadow-lg backdrop-blur-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-medium text-white">
+              <SparklesIcon className="size-4 text-amber-400" />
+              What&apos;s new in v{changelogEntry.version}
+            </div>
+            <button
+              type="button"
+              onClick={dismissChangelog}
+              className="rounded p-0.5 text-zinc-400 transition-colors hover:text-white"
+            >
+              <XIcon className="size-3.5" />
+            </button>
+          </div>
+          <ul className="space-y-1.5 text-xs text-zinc-300">
+            {changelogEntry.changes.map((change) => (
+              <li key={change} className="flex gap-2">
+                <span className="mt-1 block size-1 shrink-0 rounded-full bg-zinc-500" />
+                {change}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </>
     );
   }
 

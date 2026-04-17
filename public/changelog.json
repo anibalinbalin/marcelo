@@ -1,0 +1,24 @@
+[
+  {
+    "version": "1.73",
+    "changes": [
+      "Column cloning: template formulas now propagate when writing to new quarters",
+      "Wrong-workbook guard: uploading the template instead of the source file now shows a clear error",
+      "Label sum lookup: composite labels like \"A + B\" are now resolved automatically"
+    ]
+  },
+  {
+    "version": "1.72",
+    "changes": [
+      "Added Target Cell column to the review table showing exact cell addresses (e.g. PROJ!CL90)",
+      "Smarter shared-formula handling prevents false promotions on standalone formulas"
+    ]
+  },
+  {
+    "version": "1.71",
+    "changes": [
+      "Force-overwrite formula cells in surgical writer",
+      "Surgical xlsx writer preserves charts, externals, and printer settings"
+    ]
+  }
+]
