@@ -334,6 +334,9 @@ function clonePreviousColumn(
   for (const cell of sourceCells) {
     const { row } = splitAddress(cell.addr);
     const targetAddr = `${targetColLetter}${row}`;
+    if (findCell(xml, targetAddr)) {
+      continue;
+    }
     const cloned = cloneCellToAddress(cell, targetAddr, sharedMasters);
     xml = replaceOrInsertCell(xml, targetAddr, cloned);
   }

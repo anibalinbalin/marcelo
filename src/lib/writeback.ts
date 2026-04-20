@@ -3,7 +3,7 @@
  */
 import { getDb } from "@/db";
 import { extractionRuns, extractedValues, fieldMappings, companies } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { writeBlueValues, type CellWrite } from "@/lib/excel/surgical-writer";
 import { quarterToColOffset, getTargetCol } from "@/lib/quarter";
 import { colLetterToNumber } from "@/lib/excel/reader";
@@ -44,7 +44,9 @@ export async function generatePopulatedExcel(runId: number): Promise<WritebackRe
     })
     .from(extractedValues)
     .innerJoin(fieldMappings, eq(extractedValues.mappingId, fieldMappings.id))
-    .where(eq(extractedValues.runId, runId));
+    // Stale extracted_values must not resurrect mappings that were later
+    // deactivated from the canonical set.
+    .where(and(eq(extractedValues.runId, runId), eq(fieldMappings.isActive, true)));
 
   // 3. Download model template from Vercel Blob
   const templateResponse = await fetch(company.modelTemplateBlobUrl);
