@@ -1,12 +1,14 @@
 /**
  * Writeback orchestrator — generates a populated Excel model from approved extraction data.
  */
+import ExcelJS from "exceljs";
 import { getDb } from "@/db";
 import { extractionRuns, extractedValues, fieldMappings, companies } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { writeBlueValues, type CellWrite } from "@/lib/excel/surgical-writer";
 import { quarterToColOffset, getTargetCol } from "@/lib/quarter";
 import { colLetterToNumber } from "@/lib/excel/reader";
+import { collectLren3PreservedFormulaTargets } from "@/lib/writeback-lren3";
 
 export interface WritebackResult {
   buffer: Buffer;
@@ -81,8 +83,27 @@ export async function generatePopulatedExcel(runId: number): Promise<WritebackRe
     });
   }
 
+  let writesToApply = cellWrites;
+  const writebackWarnings: string[] = [];
+
+  if (company.ticker === "LREN3" && cellWrites.length > 0) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(templateBuffer as never);
+
+    const preservedTargets = collectLren3PreservedFormulaTargets(workbook, cellWrites);
+    if (preservedTargets.size > 0) {
+      writesToApply = cellWrites.filter((write) => {
+        const addr = workbook.getWorksheet(write.sheet)?.getCell(write.row, write.col).address;
+        return !addr || !preservedTargets.has(`${write.sheet}!${addr}`);
+      });
+      writebackWarnings.push(
+        `LREN3 preserved template formulas at ${[...preservedTargets].sort().join(", ")}`,
+      );
+    }
+  }
+
   // 5. Write values into the template
-  const { buffer, integrityReport } = await writeBlueValues(templateBuffer, cellWrites);
+  const { buffer, integrityReport } = await writeBlueValues(templateBuffer, writesToApply);
 
   // 6. Build filename
   const filename = `${company.ticker}_${run.quarter}_populated.xlsx`;
@@ -90,8 +111,8 @@ export async function generatePopulatedExcel(runId: number): Promise<WritebackRe
   return {
     buffer,
     filename,
-    cellsWritten: cellWrites.length,
+    cellsWritten: writesToApply.length,
     integrityErrors: integrityReport.errors,
-    integrityWarnings: integrityReport.warnings,
+    integrityWarnings: [...writebackWarnings, ...integrityReport.warnings],
   };
 }
