@@ -10,7 +10,7 @@ import { writeBlueValues } from "../surgical-writer";
 
 const REPORTED_FORMULA_CELLS = {
   FAT: ["CL138", "CL191", "CL240"],
-  PROJ: ["CL96", "CL102", "CL107", "CL108", "CL119", "CL128"],
+  PROJ: ["CL96", "CL102", "CL107", "CL108", "CL128"],
 } as const;
 
 function colLetterToNumber(col: string): number {

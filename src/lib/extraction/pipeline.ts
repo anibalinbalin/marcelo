@@ -38,10 +38,23 @@ export interface ExtractionResult {
 
 // ── Value transforms ────────────────────────────────────────────────────────
 
+function parseSumRows(transform: string | null): number[] | null {
+  if (!transform?.startsWith("sum_rows:")) return null;
+  const parts = transform.slice("sum_rows:".length).split(",");
+  const rows: number[] = [];
+  for (const p of parts) {
+    const n = parseInt(p.trim(), 10);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    rows.push(n);
+  }
+  return rows.length > 0 ? rows : null;
+}
+
 function applyTransform(
   rawValue: number,
   transform: string | null
 ): number {
+  if (transform?.startsWith("sum_rows:")) return rawValue;
   switch (transform) {
     case "divide_1000000":
       return rawValue / 1_000_000;
@@ -448,8 +461,21 @@ async function extractFromExcelPython(
       for (const mapping of groupMappings) {
         let value: number | null = null;
 
+        // Multi-row aggregation: sum_rows transform resolves from row map directly
+        const sumRowKeys = parseSumRows(mapping.valueTransform);
+        if (sumRowKeys) {
+          let sum = 0;
+          let found = 0;
+          for (const r of sumRowKeys) {
+            const v = rowMap[String(r)];
+            if (v !== undefined) { sum += v; found++; }
+          }
+          if (found > 0) value = sum;
+          else errors.push(`sum_rows: none of [${sumRowKeys}] found in ${sheetName}::${targetHeader}`);
+        }
+
         // Prefer row-based lookup when sourceRow is specified (disambiguates duplicate labels)
-        if (mapping.sourceRow && rowMap[String(mapping.sourceRow)] !== undefined) {
+        if (value === null && mapping.sourceRow && rowMap[String(mapping.sourceRow)] !== undefined) {
           value = rowMap[String(mapping.sourceRow)];
         }
 
@@ -653,10 +679,24 @@ async function extractFromExcel(
     const labelMap = sheetCache.get(cacheKey);
     if (!labelMap || labelMap.size === 0) continue;
 
-    // Prefer row-based lookup when sourceRow is specified (disambiguates duplicate labels)
     let value: number | null = null;
     const rMap = rowCache.get(cacheKey);
-    if (mapping.sourceRow && rMap?.has(mapping.sourceRow)) {
+
+    // Multi-row aggregation: sum_rows transform resolves from row map directly
+    const sumRowKeys = parseSumRows(mapping.valueTransform);
+    if (sumRowKeys && rMap) {
+      let sum = 0;
+      let found = 0;
+      for (const r of sumRowKeys) {
+        const v = rMap.get(r);
+        if (v !== undefined) { sum += v; found++; }
+      }
+      if (found > 0) value = sum;
+      else errors.push(`sum_rows: none of [${sumRowKeys}] found in ${mapping.sourceSection}::${mapping.sourceCol}`);
+    }
+
+    // Prefer row-based lookup when sourceRow is specified (disambiguates duplicate labels)
+    if (value === null && mapping.sourceRow && rMap?.has(mapping.sourceRow)) {
       value = rMap.get(mapping.sourceRow)!;
     }
     if (value === null) {

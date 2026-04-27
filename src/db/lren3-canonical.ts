@@ -1,7 +1,7 @@
 export const LREN3_NAME = "Lojas Renner";
 export const LREN3_TICKER = "LREN3";
 export const LREN3_TEMPLATE_PATH = "public/camila/LREN3 OK.xlsx";
-export const LREN3_EXPECTED_MAPPING_COUNT = 77;
+export const LREN3_EXPECTED_MAPPING_COUNT = 78;
 
 export interface Lren3MappingDefinition {
   colMode: "quarterly_offset";
@@ -15,7 +15,7 @@ export interface Lren3MappingDefinition {
   targetColStep: 1;
   baseQuarter: "1Q04";
   expectedCurrency: "BRL";
-  valueTransform: null;
+  valueTransform: string | null;
   validationSign: "positive" | "negative" | null;
 }
 
@@ -34,6 +34,7 @@ function makeMapping(
   sourceLabel: string,
   validationSign: Lren3MappingDefinition["validationSign"],
   sourceRow: number | null = null,
+  valueTransform: string | null = null,
 ): Lren3MappingDefinition {
   return {
     colMode: "quarterly_offset",
@@ -47,7 +48,7 @@ function makeMapping(
     targetColStep: ONE,
     baseQuarter: BASE_QUARTER,
     expectedCurrency: BRL,
-    valueTransform: null,
+    valueTransform,
     validationSign,
   };
 }
@@ -67,9 +68,9 @@ export const LREN3_PROJ_MAPPINGS: readonly Lren3MappingDefinition[] = [
   makeMapping(PROJ, 91, "Balance Sheet", "Short-Term Investments", "positive"),
   makeMapping(PROJ, 92, "Balance Sheet", "Trade Accounts Receivable", "positive"),
   makeMapping(PROJ, 93, "Balance Sheet", "Inventories", "positive"),
-  makeMapping(PROJ, 94, "Balance Sheet", "Recoverable Taxes", "positive", 14),
-  makeMapping(PROJ, 95, "Balance Sheet", "Other assets", "positive", 17),
-  makeMapping(PROJ, 99, "Balance Sheet", "Recoverable Taxes", "positive", 21),
+  makeMapping(PROJ, 94, "Balance Sheet", "Recoverable Taxes", "positive", null, "sum_rows:14,15"),
+  makeMapping(PROJ, 95, "Balance Sheet", "Other assets", "positive", null, "sum_rows:16,17"),
+  makeMapping(PROJ, 99, "Balance Sheet", "Recoverable Taxes", "positive", null, "sum_rows:21,22"),
   makeMapping(PROJ, 100, "Balance Sheet", "Deferred Taxes", "positive", 23),
   makeMapping(PROJ, 101, "Balance Sheet", "Other assets", "positive", 24),
   makeMapping(PROJ, 103, "Balance Sheet", "Investments", "positive", 29),
@@ -86,11 +87,12 @@ export const LREN3_PROJ_MAPPINGS: readonly Lren3MappingDefinition[] = [
   makeMapping(PROJ, 116, "Balance Sheet", "Liabilities Under Bylaws", "positive"),
   makeMapping(PROJ, 117, "Balance Sheet", "Obligations with Card Administrators", "positive", 46),
   makeMapping(PROJ, 118, "Balance Sheet", "Other Accounts Payable", "positive", 52),
+  makeMapping(PROJ, 119, "Balance Sheet", "Other Current Liabilities", "positive", null, "sum_rows:50,51,52"),
   makeMapping(PROJ, 120, "Balance Sheet", "Loans, Financing and Debentures", "positive", 55),
   makeMapping(PROJ, 121, "Balance Sheet", "Financing - Financial Products Operations", "positive", 56),
   makeMapping(PROJ, 122, "Balance Sheet", "Financing Lease", "positive", 57),
   makeMapping(PROJ, 123, "Balance Sheet", "Deferred Income Tax and Social Contribution", "positive", 58),
-  makeMapping(PROJ, 125, "Balance Sheet", "Other Accounts Payable", "positive", 63),
+  makeMapping(PROJ, 125, "Balance Sheet", "Other Accounts Payable", "positive", null, "sum_rows:59,60,63"),
   makeMapping(PROJ, 126, "Balance Sheet", "Shareholder's Equity", "positive"),
   makeMapping(PROJ, 212, "Income Statement", "Equity Pick-ups", null),
 ] as const;
@@ -146,7 +148,7 @@ export const LREN3_FAT_LITERAL_ROWS = [
 
 export const LREN3_FAT_FORMULA_ROWS = [53] as const;
 
-export const LREN3_PROJ_FORMULA_ROWS = [96, 102, 107, 108, 119, 128] as const;
+export const LREN3_PROJ_FORMULA_ROWS = [96, 102, 107, 108, 128] as const;
 
 export function buildLren3MappingValues(companyId: number) {
   return LREN3_CANONICAL_MAPPINGS.map((mapping) => ({
