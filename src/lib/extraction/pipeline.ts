@@ -543,7 +543,10 @@ async function extractFromExcel(
   // Files >2MB crash ExcelJS with OOM — use Python (openpyxl) for large files.
   // ExcelJS inflates xlsx into in-memory DOM; complex workbooks blow up the heap.
   const MAX_EXCELJS_SIZE = 2 * 1024 * 1024; // 2MB
-  if (fileBuffer.length > MAX_EXCELJS_SIZE || process.env.VERCEL) {
+  if (fileBuffer.length > MAX_EXCELJS_SIZE) {
+    if (!process.env.EXTRACTION_API_URL) {
+      throw new Error(`Excel file too large for ExcelJS (${(fileBuffer.length / 1024 / 1024).toFixed(1)}MB) and no EXTRACTION_API_URL configured`);
+    }
     return extractFromExcelPython(fileBuffer, mappings, runId, errors);
   }
 
