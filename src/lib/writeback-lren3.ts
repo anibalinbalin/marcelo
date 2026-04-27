@@ -24,8 +24,8 @@ function colNumberToLetter(n: number): string {
 export function buildLren3ProtectedAddrs(targetCol: number): Set<string> {
   const col = colNumberToLetter(targetCol);
   const addrs = new Set<string>();
-  for (const r of FAT_PROTECTED_ROWS) addrs.add(`${col}${r}`);
-  for (const r of PROJ_PROTECTED_ROWS) addrs.add(`${col}${r}`);
+  for (const r of FAT_PROTECTED_ROWS) addrs.add(`FAT!${col}${r}`);
+  for (const r of PROJ_PROTECTED_ROWS) addrs.add(`PROJ!${col}${r}`);
   return addrs;
 }
 
@@ -34,7 +34,7 @@ const FAT_FORCE_CLONE_ROWS = [130];
 export function buildLren3ForceCloneAddrs(targetCol: number): Set<string> {
   const col = colNumberToLetter(targetCol);
   const addrs = new Set<string>();
-  for (const r of FAT_FORCE_CLONE_ROWS) addrs.add(`${col}${r}`);
+  for (const r of FAT_FORCE_CLONE_ROWS) addrs.add(`FAT!${col}${r}`);
   return addrs;
 }
 

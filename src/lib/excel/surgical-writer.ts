@@ -417,6 +417,27 @@ function restyleAndCloneColumn(
       continue;
     }
 
+    if (isForwardMaster(targetCell) && forceCloneAddrs?.has(addr)) {
+      const f = parseFormula(targetCell.inner);
+      if (f?.type === "shared" && f.ref && f.ref.includes(":") && f.si) {
+        const [, rangeEnd] = f.ref.split(":");
+        const rangeCells = enumerateRange(addr, rangeEnd);
+        const followers = rangeCells.slice(1);
+        if (followers.length > 0) {
+          const newMasterAddr = followers[0];
+          const lastClone = followers[followers.length - 1];
+          const newRef = newMasterAddr === lastClone ? newMasterAddr : `${newMasterAddr}:${lastClone}`;
+          const oldParts = splitAddress(addr);
+          const newParts = splitAddress(newMasterAddr);
+          const colDelta = columnLetterToNumber(newParts.col) - columnLetterToNumber(oldParts.col);
+          const rowDelta = newParts.row - oldParts.row;
+          const shiftedBody = shiftFormula(f.body, colDelta, rowDelta);
+          const promoted = promoteSharedClone(xml, newMasterAddr, f.si, newRef, shiftedBody);
+          if (promoted) xml = promoted;
+        }
+      }
+    }
+
     const cloned = cloneCellToAddress(sourceCell, addr, sharedMasters);
     const styledClone = cloned.replace(/\bs="\d+"/, `s="${sourceStyle}"`);
     const finalClone = styledClone.match(/\bs="/) ? styledClone : styledClone.replace(`r="${addr}"`, `r="${addr}" s="${sourceStyle}"`);
@@ -790,9 +811,22 @@ export async function writeBlueValues(
 
     // Full CK→CL restyle + formula clone for non-written cells
     const writtenAddrs = new Set(writes.map(w => addressFromRowCol(w.row, w.col)));
-    if (protectedAddrs) for (const a of protectedAddrs) writtenAddrs.add(a);
+    if (protectedAddrs) {
+      for (const a of protectedAddrs) {
+        if (a.includes("!")) {
+          const [s, addr] = a.split("!");
+          if (s === sheetName) writtenAddrs.add(addr);
+        } else writtenAddrs.add(a);
+      }
+    }
+    const sheetForceClone = forceCloneAddrs ? new Set(
+      [...forceCloneAddrs].filter(a => {
+        if (!a.includes("!")) return true;
+        return a.split("!")[0] === sheetName;
+      }).map(a => a.includes("!") ? a.split("!")[1] : a),
+    ) : undefined;
     for (const targetCol of targetCols) {
-      xml = restyleAndCloneColumn(xml, targetCol, writtenAddrs, forceCloneAddrs);
+      xml = restyleAndCloneColumn(xml, targetCol, writtenAddrs, sheetForceClone);
     }
     zip.file(path, xml);
   }
