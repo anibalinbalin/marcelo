@@ -15,10 +15,12 @@ function isFormulaLikeCellValue(
 }
 
 function isBlackLikeFormulaColor(color: WorkbookFontColor | undefined): boolean {
-  if (!color) return true;
+  if (!color) return false;
+  if (color.theme !== undefined && color.theme !== null) {
+    return color.theme === 0;
+  }
   const rgb = color.argb ?? color.rgb ?? null;
-  if (!rgb) return true;
-
+  if (!rgb) return false;
   const normalized = rgb.toUpperCase();
   return normalized === "FF000000" || normalized === "000000" || normalized === "FF000001";
 }

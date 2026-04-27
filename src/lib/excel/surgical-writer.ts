@@ -189,8 +189,9 @@ function stylePreserve(attrs: string): string {
   return m ? ` s="${m[1]}"` : "";
 }
 
-function buildLiteralCell(addr: string, value: number, attrs: string): string {
-  return `<c r="${addr}"${stylePreserve(attrs)}><v>${value}</v></c>`;
+function buildLiteralCell(addr: string, value: number, attrs: string, styleOverride?: string): string {
+  const style = styleOverride ? ` s="${styleOverride}"` : stylePreserve(attrs);
+  return `<c r="${addr}"${style}><v>${value}</v></c>`;
 }
 
 function replaceCellAddress(node: string, fromAddr: string, toAddr: string): string {
@@ -344,6 +345,26 @@ function clonePreviousColumn(
   return xml;
 }
 
+// ── Previous-column style map ───────────────────────────────────────────────
+
+function collectPrevColStyles(
+  sheetXml: string,
+  targetCol: number,
+): Map<string, string> {
+  if (targetCol <= 1) return new Map();
+  const prevColLetter = columnNumberToLetter(targetCol - 1);
+  const styles = new Map<string, string>();
+  const cellRe = new RegExp(
+    `<c\\b[^>]*?\\br="(${escapeRegex(prevColLetter)}(\\d+))"[^>]*?\\bs="(\\d+)"[^>]*(?:/>|>[\\s\\S]*?</c>)`,
+    "g",
+  );
+  for (const m of sheetXml.matchAll(cellRe)) {
+    const targetAddr = `${columnNumberToLetter(targetCol)}${m[2]}`;
+    styles.set(targetAddr, m[3]);
+  }
+  return styles;
+}
+
 // ── Per-sheet rewrite ────────────────────────────────────────────────────────
 
 interface SheetPatchResult {
@@ -356,6 +377,7 @@ function patchSheet(
   sheetXml: string,
   sheetName: string,
   writes: CellWrite[],
+  styleOverrides?: Map<string, string>,
 ): SheetPatchResult {
   const errors: string[] = [];
   const demoted = new Set<string>();
@@ -366,7 +388,7 @@ function patchSheet(
   for (const w of writes) {
     const addr = addressFromRowCol(w.row, w.col);
     try {
-      const next = rewriteOne(xml, sheetName, addr, w.value, writeAddrSet, demoted);
+      const next = rewriteOne(xml, sheetName, addr, w.value, writeAddrSet, demoted, styleOverrides?.get(addr));
       if (next.error) errors.push(next.error);
       else xml = next.xml;
     } catch (e) {
@@ -388,6 +410,7 @@ function rewriteOne(
   value: number,
   writeAddrSet: Set<string>,
   demoted: Set<string>,
+  styleOverride?: string,
 ): RewriteResult {
   const cell = findCell(xml, addr);
 
@@ -396,10 +419,7 @@ function rewriteOne(
   }
 
   if (cell.selfClosing || !/<f\b/.test(cell.inner)) {
-    // Plain value cell, shared-string cell, or empty placeholder — simple
-    // overwrite. Dropping `t="..."` is intentional — a number should not be
-    // a shared-string reference.
-    const newNode = buildLiteralCell(addr, value, cell.attrs);
+    const newNode = buildLiteralCell(addr, value, cell.attrs, styleOverride);
     return { xml: xml.slice(0, cell.index) + newNode + xml.slice(cell.index + cell.full.length) };
   }
 
@@ -492,7 +512,7 @@ function rewriteOne(
     if (!masterNow) {
       return { xml, error: `${sheetName}!${addr}: master vanished during promotion` };
     }
-    const newMasterCellNode = buildLiteralCell(addr, value, masterNow.attrs);
+    const newMasterCellNode = buildLiteralCell(addr, value, masterNow.attrs, styleOverride);
     const rewritten =
       nextXml.slice(0, masterNow.index) +
       newMasterCellNode +
@@ -503,7 +523,7 @@ function rewriteOne(
 
   // Plain formula, shared clone, or degenerate shared master (single-cell
   // ref, no clones). Strip the <f> and emit a literal cell.
-  const newNode = buildLiteralCell(addr, value, cell.attrs);
+  const newNode = buildLiteralCell(addr, value, cell.attrs, styleOverride);
   demoted.add(addr);
   return { xml: xml.slice(0, cell.index) + newNode + xml.slice(cell.index + cell.full.length) };
 }
@@ -666,10 +686,13 @@ export async function writeBlueValues(
     let xml = await f.async("string");
     const sheetName = pathToSheet.get(path) ?? path;
     const targetCols = [...new Set(writes.map((write) => write.col))].sort((a, b) => a - b);
+    let prevColStyles = new Map<string, string>();
     for (const targetCol of targetCols) {
       xml = clonePreviousColumn(xml, targetCol);
+      const colStyles = collectPrevColStyles(xml, targetCol);
+      for (const [addr, style] of colStyles) prevColStyles.set(addr, style);
     }
-    const res = patchSheet(xml, sheetName, writes);
+    const res = patchSheet(xml, sheetName, writes, prevColStyles);
     for (const err of res.errors) errors.push(err);
     if (res.demoted.size > 0) anyDemoted = true;
     zip.file(path, res.xml);
