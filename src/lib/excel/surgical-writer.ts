@@ -345,6 +345,86 @@ function clonePreviousColumn(
   return xml;
 }
 
+// ── Full CK→CL restyle + formula clone ──────────────────────────────────────
+
+function isForwardMaster(cell: CellMatch): boolean {
+  if (cell.selfClosing) return false;
+  const f = parseFormula(cell.inner);
+  if (!f || f.type !== "shared" || !f.ref || !f.ref.includes(":")) return false;
+  const [start, end] = f.ref.split(":");
+  const startCol = splitAddress(start).col;
+  const endCol = splitAddress(end).col;
+  return columnLetterToNumber(endCol) > columnLetterToNumber(startCol);
+}
+
+function restyleAndCloneColumn(
+  sheetXml: string,
+  targetCol: number,
+  writtenAddrs: Set<string>,
+): string {
+  if (targetCol <= 1) return sheetXml;
+
+  const sourceColLetter = columnNumberToLetter(targetCol - 1);
+  const targetColLetter = columnNumberToLetter(targetCol);
+  const sharedMasters = buildSharedFormulaMasterMap(sheetXml);
+
+  const sourceCellRe = new RegExp(
+    `<c\\b([^>]*?\\br="(${escapeRegex(sourceColLetter)}\\d+)"[^>]*)(/>|>([\\s\\S]*?)</c>)`,
+    "g",
+  );
+  const sourceCells = new Map<number, CellMatch>();
+  for (const match of sheetXml.matchAll(sourceCellRe)) {
+    const cell: CellMatch = {
+      addr: match[2],
+      full: match[0],
+      index: match.index ?? 0,
+      attrs: match[1],
+      selfClosing: match[3] === "/>",
+      inner: match[3] === "/>" ? "" : (match[4] ?? ""),
+    };
+    sourceCells.set(splitAddress(cell.addr).row, cell);
+  }
+
+  let xml = sheetXml;
+
+  // Collect target cell addresses (don't store indices — they go stale after edits)
+  const targetCellRe = new RegExp(
+    `<c\\b[^>]*?\\br="(${escapeRegex(targetColLetter)}\\d+)"[^>]*(?:/>|>[\\s\\S]*?</c>)`,
+    "g",
+  );
+  const targetAddrs: string[] = [];
+  for (const m of sheetXml.matchAll(targetCellRe)) {
+    targetAddrs.push(m[1]);
+  }
+
+  for (const addr of targetAddrs) {
+    if (writtenAddrs.has(addr)) continue;
+
+    const row = splitAddress(addr).row;
+    const sourceCell = sourceCells.get(row);
+    if (!sourceCell) continue;
+
+    const sourceStyle = sourceCell.attrs.match(/\bs="(\d+)"/)?.[1];
+    if (!sourceStyle) continue;
+
+    const targetCell = findCell(xml, addr);
+    if (!targetCell) continue;
+
+    if (isForwardMaster(targetCell)) {
+      const restyled = targetCell.full.replace(/\bs="\d+"/, `s="${sourceStyle}"`);
+      xml = xml.slice(0, targetCell.index) + restyled + xml.slice(targetCell.index + targetCell.full.length);
+      continue;
+    }
+
+    const cloned = cloneCellToAddress(sourceCell, addr, sharedMasters);
+    const styledClone = cloned.replace(/\bs="\d+"/, `s="${sourceStyle}"`);
+    const finalClone = styledClone.match(/\bs="/) ? styledClone : styledClone.replace(`r="${addr}"`, `r="${addr}" s="${sourceStyle}"`);
+    xml = replaceOrInsertCell(xml, addr, finalClone);
+  }
+
+  return xml;
+}
+
 // ── Previous-column style map ───────────────────────────────────────────────
 
 function collectPrevColStyles(
@@ -695,7 +775,14 @@ export async function writeBlueValues(
     const res = patchSheet(xml, sheetName, writes, prevColStyles);
     for (const err of res.errors) errors.push(err);
     if (res.demoted.size > 0) anyDemoted = true;
-    zip.file(path, res.xml);
+    xml = res.xml;
+
+    // Full CK→CL restyle + formula clone for non-written cells
+    const writtenAddrs = new Set(writes.map(w => addressFromRowCol(w.row, w.col)));
+    for (const targetCol of targetCols) {
+      xml = restyleAndCloneColumn(xml, targetCol, writtenAddrs);
+    }
+    zip.file(path, xml);
   }
 
   // Force recalculation on open so any surviving dependent formulas recompute
