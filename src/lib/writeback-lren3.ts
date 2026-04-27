@@ -1,5 +1,11 @@
 import ExcelJS from "exceljs";
 import type { CellWrite } from "./excel/surgical-writer";
+import { LREN3_PROJ_FORMULA_ROWS, LREN3_FAT_FORMULA_ROWS } from "@/db/lren3-canonical";
+
+const FORMULA_ROW_SET = new Set<number>([
+  ...LREN3_PROJ_FORMULA_ROWS,
+  ...LREN3_FAT_FORMULA_ROWS,
+]);
 
 type WorkbookFontColor = {
   argb?: string | null;
@@ -32,6 +38,8 @@ export function collectLren3PreservedFormulaTargets(
   const preserved = new Set<string>();
 
   for (const write of writes) {
+    if (!FORMULA_ROW_SET.has(write.row)) continue;
+
     const ws = workbook.getWorksheet(write.sheet);
     if (!ws) continue;
 
