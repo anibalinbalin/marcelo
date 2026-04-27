@@ -558,8 +558,9 @@ async function extractFromExcel(
 
   const db = getDb();
 
-  // Build a cache of sheet data: { sheetName → { label → value } }
+  // Build a cache of sheet data: { sheetName → { label → value } } + row→value
   const sheetCache = new Map<string, Map<string, number>>();
+  const rowCache = new Map<string, Map<number, number>>();
 
   for (const mapping of mappings) {
     if (!mapping.sourceSection || !mapping.sourceCol) continue;
@@ -615,8 +616,9 @@ async function extractFromExcel(
         continue;
       }
 
-      // Build label→value map (check columns B=2 and C=3 for EN/PT labels)
+      // Build label→value and row→value maps
       const labelMap = new Map<string, number>();
+      const rowMap = new Map<number, number>();
       for (let r = 3; r <= ws.rowCount; r++) {
         const labelB = ws.getCell(r, 2).value;
         const labelC = ws.getCell(r, 3).value;
@@ -624,11 +626,12 @@ async function extractFromExcel(
         const val = raw && typeof raw === "object" && "result" in raw ? raw.result : raw;
         if (val == null || typeof val !== "number") continue;
 
-        // Index by both EN (col B) and PT (col C) labels, lowercased
+        rowMap.set(r, val);
         if (labelB) labelMap.set(String(labelB).toLowerCase().trim(), val);
         if (labelC) labelMap.set(String(labelC).toLowerCase().trim(), val);
       }
       sheetCache.set(cacheKey, labelMap);
+      rowCache.set(cacheKey, rowMap);
     }
   }
 
@@ -650,7 +653,15 @@ async function extractFromExcel(
     const labelMap = sheetCache.get(cacheKey);
     if (!labelMap || labelMap.size === 0) continue;
 
-    const value = lookupExcelLabelValue(labelMap, mapping.sourceLabel);
+    // Prefer row-based lookup when sourceRow is specified (disambiguates duplicate labels)
+    let value: number | null = null;
+    const rMap = rowCache.get(cacheKey);
+    if (mapping.sourceRow && rMap?.has(mapping.sourceRow)) {
+      value = rMap.get(mapping.sourceRow)!;
+    }
+    if (value === null) {
+      value = lookupExcelLabelValue(labelMap, mapping.sourceLabel);
+    }
 
     if (value === null) {
       errors.push(`No match for "${mapping.sourceLabel}" in ${mapping.sourceSection}::${mapping.sourceCol}`);
