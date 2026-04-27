@@ -26,7 +26,7 @@ export interface CellWrite {
   sheet: string;
   row: number;
   col: number;
-  value: number;
+  value: number | null;
 }
 
 export interface IntegrityReport {
@@ -361,6 +361,7 @@ function restyleAndCloneColumn(
   sheetXml: string,
   targetCol: number,
   writtenAddrs: Set<string>,
+  forceCloneAddrs?: Set<string>,
 ): string {
   if (targetCol <= 1) return sheetXml;
 
@@ -410,7 +411,7 @@ function restyleAndCloneColumn(
     const targetCell = findCell(xml, addr);
     if (!targetCell) continue;
 
-    if (isForwardMaster(targetCell)) {
+    if (isForwardMaster(targetCell) && !forceCloneAddrs?.has(addr)) {
       const restyled = targetCell.full.replace(/\bs="\d+"/, `s="${sourceStyle}"`);
       xml = xml.slice(0, targetCell.index) + restyled + xml.slice(targetCell.index + targetCell.full.length);
       continue;
@@ -487,11 +488,19 @@ function rewriteOne(
   xml: string,
   sheetName: string,
   addr: string,
-  value: number,
+  value: number | null,
   writeAddrSet: Set<string>,
   demoted: Set<string>,
   styleOverride?: string,
 ): RewriteResult {
+  if (value === null) {
+    const cell = findCell(xml, addr);
+    if (!cell) return { xml };
+    const style = cell.attrs.match(/\bs="(\d+)"/)?.[1];
+    const emptyCell = style ? `<c r="${addr}" s="${style}"/>` : `<c r="${addr}"/>`;
+    return { xml: xml.slice(0, cell.index) + emptyCell + xml.slice(cell.index + cell.full.length) };
+  }
+
   const cell = findCell(xml, addr);
 
   if (!cell) {
@@ -715,6 +724,8 @@ function setFullCalcOnLoad(workbookXml: string): string {
 export async function writeBlueValues(
   templateBuffer: Buffer,
   valuesToWrite: CellWrite[],
+  protectedAddrs?: Set<string>,
+  forceCloneAddrs?: Set<string>,
 ): Promise<{ buffer: Buffer; integrityReport: IntegrityReport }> {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -779,8 +790,9 @@ export async function writeBlueValues(
 
     // Full CK→CL restyle + formula clone for non-written cells
     const writtenAddrs = new Set(writes.map(w => addressFromRowCol(w.row, w.col)));
+    if (protectedAddrs) for (const a of protectedAddrs) writtenAddrs.add(a);
     for (const targetCol of targetCols) {
-      xml = restyleAndCloneColumn(xml, targetCol, writtenAddrs);
+      xml = restyleAndCloneColumn(xml, targetCol, writtenAddrs, forceCloneAddrs);
     }
     zip.file(path, xml);
   }
@@ -835,6 +847,7 @@ export async function writeBlueValues(
     const sheetName = pathToSheet.get(path) ?? path;
     outputFormulaCounts[sheetName] = countFormulasInSheet(xml);
     for (const w of writes) {
+      if (w.value === null) continue;
       const addr = addressFromRowCol(w.row, w.col);
       const cellRe = new RegExp(
         `<c\\b[^>]*\\br="${escapeRegex(addr)}"[^>]*>\\s*<v>([^<]+)</v>\\s*</c>`,

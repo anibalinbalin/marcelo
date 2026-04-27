@@ -8,7 +8,7 @@ import { and, eq } from "drizzle-orm";
 import { writeBlueValues, type CellWrite } from "@/lib/excel/surgical-writer";
 import { quarterToColOffset, getTargetCol } from "@/lib/quarter";
 import { colLetterToNumber } from "@/lib/excel/reader";
-import { collectLren3PreservedFormulaTargets } from "@/lib/writeback-lren3";
+import { collectLren3PreservedFormulaTargets, buildLren3ProtectedAddrs, buildLren3ForceCloneAddrs, LREN3_CLEAR_ROWS } from "@/lib/writeback-lren3";
 
 export interface WritebackResult {
   buffer: Buffer;
@@ -85,6 +85,8 @@ export async function generatePopulatedExcel(runId: number): Promise<WritebackRe
 
   let writesToApply = cellWrites;
   const writebackWarnings: string[] = [];
+  let protectedAddrs: Set<string> | undefined;
+  let forceCloneAddrs: Set<string> | undefined;
 
   if (company.ticker === "LREN3" && cellWrites.length > 0) {
     const workbook = new ExcelJS.Workbook();
@@ -100,10 +102,19 @@ export async function generatePopulatedExcel(runId: number): Promise<WritebackRe
         `LREN3 preserved template formulas at ${[...preservedTargets].sort().join(", ")}`,
       );
     }
+
+    const targetCol = cellWrites[0]?.col;
+    if (targetCol) {
+      protectedAddrs = buildLren3ProtectedAddrs(targetCol);
+      forceCloneAddrs = buildLren3ForceCloneAddrs(targetCol);
+      for (const row of LREN3_CLEAR_ROWS) {
+        writesToApply.push({ sheet: "PROJ", row, col: targetCol, value: null });
+      }
+    }
   }
 
   // 5. Write values into the template
-  const { buffer, integrityReport } = await writeBlueValues(templateBuffer, writesToApply);
+  const { buffer, integrityReport } = await writeBlueValues(templateBuffer, writesToApply, protectedAddrs, forceCloneAddrs);
 
   // 6. Build filename
   const filename = `${company.ticker}_${run.quarter}_populated.xlsx`;

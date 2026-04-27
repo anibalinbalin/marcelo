@@ -7,6 +7,37 @@ const FORMULA_ROW_SET = new Set<number>([
   ...LREN3_FAT_FORMULA_ROWS,
 ]);
 
+const FAT_PROTECTED_ROWS = [132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146];
+const PROJ_PROTECTED_ROWS = [97];
+export const LREN3_CLEAR_ROWS = [97];
+
+function colNumberToLetter(n: number): string {
+  let s = "";
+  while (n > 0) {
+    n--;
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26);
+  }
+  return s;
+}
+
+export function buildLren3ProtectedAddrs(targetCol: number): Set<string> {
+  const col = colNumberToLetter(targetCol);
+  const addrs = new Set<string>();
+  for (const r of FAT_PROTECTED_ROWS) addrs.add(`${col}${r}`);
+  for (const r of PROJ_PROTECTED_ROWS) addrs.add(`${col}${r}`);
+  return addrs;
+}
+
+const FAT_FORCE_CLONE_ROWS = [130];
+
+export function buildLren3ForceCloneAddrs(targetCol: number): Set<string> {
+  const col = colNumberToLetter(targetCol);
+  const addrs = new Set<string>();
+  for (const r of FAT_FORCE_CLONE_ROWS) addrs.add(`${col}${r}`);
+  return addrs;
+}
+
 type WorkbookFontColor = {
   argb?: string | null;
   rgb?: string | null;
