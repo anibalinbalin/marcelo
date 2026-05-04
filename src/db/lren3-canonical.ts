@@ -1,7 +1,7 @@
 export const LREN3_NAME = "Lojas Renner";
 export const LREN3_TICKER = "LREN3";
 export const LREN3_TEMPLATE_PATH = "public/camila/LREN3 OK.xlsx";
-export const LREN3_EXPECTED_MAPPING_COUNT = 78;
+export const LREN3_EXPECTED_MAPPING_COUNT = 77;
 
 export interface Lren3MappingDefinition {
   colMode: "quarterly_offset";
@@ -86,8 +86,7 @@ export const LREN3_PROJ_MAPPINGS: readonly Lren3MappingDefinition[] = [
   makeMapping(PROJ, 115, "Balance Sheet", "Social and labor obligations", "positive"),
   makeMapping(PROJ, 116, "Balance Sheet", "Liabilities Under Bylaws", "positive"),
   makeMapping(PROJ, 117, "Balance Sheet", "Obligations with Card Administrators", "positive", 46),
-  makeMapping(PROJ, 118, "Balance Sheet", "Other Accounts Payable", "positive", 52),
-  makeMapping(PROJ, 119, "Balance Sheet", "Other Current Liabilities", "positive", null, "sum_rows:50,51,52"),
+  makeMapping(PROJ, 118, "Balance Sheet", "Other Current Liabilities", "positive", null, "sum_rows:50,51,52"),
   makeMapping(PROJ, 120, "Balance Sheet", "Loans, Financing and Debentures", "positive", 55),
   makeMapping(PROJ, 121, "Balance Sheet", "Financing - Financial Products Operations", "positive", 56),
   makeMapping(PROJ, 122, "Balance Sheet", "Financing Lease", "positive", 57),
