@@ -142,6 +142,14 @@ function extractPressReleaseFromText(pages: string[]): PdfSection {
         if (found.has(canonical)) continue;
         if (!aliases.some((a) => line.includes(a))) continue;
 
+        // Real table headers are short (just the title, maybe column labels).
+        // Skip prose sentences and data rows where the name appears with numbers.
+        const matchedAlias = aliases.find((a) => line.includes(a))!;
+        const afterAlias = line.slice(line.indexOf(matchedAlias) + matchedAlias.length).trim();
+        const beforeAlias = line.slice(0, line.indexOf(matchedAlias)).trim();
+        if (beforeAlias.length > 5) continue;
+        if (/^\d/.test(afterAlias.replace(/[,()%\s]/g, "")) && afterAlias.length > 20) continue;
+
         // Tentatively scan for regional data rows below this line.
         // Only accept as a real table if we find at least 2 region matches.
         const candidateRows: PdfTableRow[] = [];
