@@ -795,12 +795,17 @@ export async function writeBlueValues(
       errors.push(`Worksheet file ${path} missing from archive`);
       continue;
     }
-    let xml = await f.async("string");
+    const originalXml = await f.async("string");
+    let xml = originalXml;
     const sheetName = pathToSheet.get(path) ?? path;
     const targetCols = [...new Set(writes.map((write) => write.col))].sort((a, b) => a - b);
     let prevColStyles = new Map<string, string>();
     for (const targetCol of targetCols) {
-      xml = clonePreviousColumn(xml, targetCol);
+      const colLetter = columnNumberToLetter(targetCol);
+      const hasExistingCells = new RegExp(`<c\\b[^>]*r="${escapeRegex(colLetter)}\\d+"`).test(xml);
+      if (!hasExistingCells) {
+        xml = clonePreviousColumn(xml, targetCol);
+      }
       const colStyles = collectPrevColStyles(xml, targetCol);
       for (const [addr, style] of colStyles) prevColStyles.set(addr, style);
     }
@@ -826,7 +831,11 @@ export async function writeBlueValues(
       }).map(a => a.includes("!") ? a.split("!")[1] : a),
     ) : undefined;
     for (const targetCol of targetCols) {
-      xml = restyleAndCloneColumn(xml, targetCol, writtenAddrs, sheetForceClone);
+      const colLetter = columnNumberToLetter(targetCol);
+      const colHasExisting = new RegExp(`<c\\b[^>]*r="${escapeRegex(colLetter)}\\d+"`).test(originalXml);
+      if (!colHasExisting) {
+        xml = restyleAndCloneColumn(xml, targetCol, writtenAddrs, sheetForceClone);
+      }
     }
     zip.file(path, xml);
   }
