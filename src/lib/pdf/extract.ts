@@ -60,8 +60,9 @@ async function extractPdfTablesNode(
   sectionCodes?: string[]
 ): Promise<PdfSection[]> {
   const { extractText } = await import("unpdf");
-  const result = await extractText(new Uint8Array(pdfBuffer), { mergePages: true });
-  const text = result.text ?? "";
+  const result = await extractText(new Uint8Array(pdfBuffer), { mergePages: false });
+  const pages = Array.isArray(result.text) ? result.text : [String(result.text ?? "")];
+  const text = pages.join("\n");
 
   const lines = text.split("\n").map((l: string) => l.trim()).filter(Boolean);
   const filterCodes = sectionCodes ? new Set(sectionCodes) : null;
@@ -93,13 +94,23 @@ async function extractPdfTablesNode(
       // Skip header/meta rows
       if (line.startsWith("Concepto") || line.includes("[sinopsis]")) continue;
 
-      // Split on 2+ spaces to separate label from values
-      const parts = line.split(/\s{2,}/);
-      if (parts.length >= 2) {
-        const label = parts[0].trim();
-        const values = parts.slice(1).map((p: string) => parseNumber(p));
+      // unpdf renders table cells with single spaces, so split into tokens
+      // and walk backwards to find where numeric values begin
+      const tokens = line.split(/\s+/);
+      let firstNumIdx = tokens.length;
+      for (let j = tokens.length - 1; j >= 0; j--) {
+        const cleaned = tokens[j].replace(/[,().]/g, "");
+        if (/^\d+$/.test(cleaned)) {
+          firstNumIdx = j;
+        } else {
+          break;
+        }
+      }
 
-        // Only add if we got at least one numeric value and a non-empty label
+      if (firstNumIdx > 0 && firstNumIdx < tokens.length) {
+        const label = tokens.slice(0, firstNumIdx).join(" ");
+        const values = tokens.slice(firstNumIdx).map((p: string) => parseNumber(p));
+
         if (label && values.some((v: number | null) => v !== null)) {
           currentSection.tables[0].rows.push({ label, values });
         }
