@@ -121,6 +121,56 @@ async function extractPdfTablesNode(
   return sections;
 }
 
+const PRESS_RELEASE_TABLE_NAMES: Record<string, string[]> = {
+  "Ventas Netas": ["Ventas Netas"],
+  "Utilidad Bruta": ["Utilidad Bruta"],
+  "Utilidad de Operación": ["Utilidad de Operación", "Utilidad de Operacion"],
+  "UAFIDA Ajustada": ["UAFIDA Ajustada", "UAFIDA Aj"],
+};
+
+const PRESS_RELEASE_REGIONS = ["Norteamérica", "México", "EAA", "Latinoamérica", "Grupo Bimbo"];
+
+function extractPressReleaseFromText(pages: string[]): PdfSection {
+  const rows: PdfTableRow[] = [];
+  const found = new Set<string>();
+
+  for (const pageText of pages) {
+    const lines = pageText.split("\n").map((l) => l.trim()).filter(Boolean);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      for (const [canonical, aliases] of Object.entries(PRESS_RELEASE_TABLE_NAMES)) {
+        if (found.has(canonical)) continue;
+        if (!aliases.some((a) => line.includes(a))) continue;
+
+        // Tentatively scan for regional data rows below this line.
+        // Only accept as a real table if we find at least 2 region matches.
+        const candidateRows: PdfTableRow[] = [];
+        for (let j = i + 1; j < Math.min(i + 15, lines.length); j++) {
+          const dataLine = lines[j];
+          const matchedRegion = PRESS_RELEASE_REGIONS.find(
+            (r) => dataLine.toLowerCase().startsWith(r.toLowerCase())
+          );
+          if (!matchedRegion) continue;
+
+          const rest = dataLine.slice(matchedRegion.length).trim();
+          const tokens = rest.split(/\s+/);
+          const val = parseNumber(tokens[0] ?? "");
+          if (val !== null) {
+            candidateRows.push({ label: `${canonical}|${matchedRegion}`, values: [val] });
+          }
+        }
+
+        if (candidateRows.length >= 2) {
+          found.add(canonical);
+          rows.push(...candidateRows);
+        }
+      }
+    }
+  }
+
+  return { code: "press_release", pages: [], tables: rows.length > 0 ? [{ page: 0, headers: ["Region", "Quarter"], rows }] : [] };
+}
+
 /**
  * Extract tables from a BIVA quarterly PDF filing.
  * Uses pdfplumber (Python) locally, falls back to pdf-parse (Node.js) on Vercel.
@@ -131,7 +181,16 @@ export async function extractPdfTables(
 ): Promise<PdfSection[]> {
   // On Vercel, use Node.js-based extraction (no Python available)
   if (process.env.VERCEL) {
-    return extractPdfTablesNode(pdfBuffer, sectionCodes);
+    const wantPR = sectionCodes?.includes("press_release");
+    const bivaOnly = sectionCodes?.filter((c) => c !== "press_release");
+    const sections = await extractPdfTablesNode(pdfBuffer, bivaOnly?.length ? bivaOnly : undefined);
+    if (wantPR) {
+      const { extractText } = await import("unpdf");
+      const result = await extractText(new Uint8Array(pdfBuffer), { mergePages: false });
+      const pages = Array.isArray(result.text) ? result.text : [String(result.text ?? "")];
+      sections.push(extractPressReleaseFromText(pages));
+    }
+    return sections;
   }
 
   // Locally, try pdfplumber first, fall back to Node.js

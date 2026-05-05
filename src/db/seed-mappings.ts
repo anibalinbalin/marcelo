@@ -1,6 +1,7 @@
 /**
- * Seed field mappings for BIMBO — maps BIVA PDF labels to PROJ sheet blue cells.
- * Based on benchmark results: PDF values are in full units, Excel in millions.
+ * Seed field mappings for BIMBO — maps BIVA PDF labels to PROJ + FAT sheet cells.
+ * PROJ: structured BIVA sections ([310000], [210000]), values in full units → divide_1000000.
+ * FAT: press release regional tables, values already in millions MXN → no transform.
  */
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -30,14 +31,38 @@ const BIMBO_PROJ_MAPPINGS = [
   { sourceSection: "[210000]", sourceLabel: "Total de capital contable", targetSheet: "PROJ", targetRow: 80, valueTransform: "divide_1000000", validationSign: "positive" },
 ];
 
+// FAT sheet — regional breakdown from press release tables (already in millions MXN)
+const BIMBO_FAT_MAPPINGS = [
+  // México
+  { sourceLabel: "Ventas Netas|México", targetRow: 23, validationSign: "positive" },
+  { sourceLabel: "Utilidad Bruta|México", targetRow: 27, validationSign: "positive" },
+  { sourceLabel: "Utilidad de Operación|México", targetRow: 33, validationSign: "positive" },
+  { sourceLabel: "UAFIDA Ajustada|México", targetRow: 38, validationSign: "positive" },
+  // US & Canada (Norteamérica)
+  { sourceLabel: "Ventas Netas|Norteamérica", targetRow: 49, validationSign: "positive" },
+  { sourceLabel: "Utilidad Bruta|Norteamérica", targetRow: 53, validationSign: "positive" },
+  { sourceLabel: "Utilidad de Operación|Norteamérica", targetRow: 59, validationSign: null },
+  { sourceLabel: "UAFIDA Ajustada|Norteamérica", targetRow: 64, validationSign: "positive" },
+  // EAA
+  { sourceLabel: "Ventas Netas|EAA", targetRow: 77, validationSign: "positive" },
+  { sourceLabel: "Utilidad Bruta|EAA", targetRow: 81, validationSign: "positive" },
+  { sourceLabel: "Utilidad de Operación|EAA", targetRow: 87, validationSign: null },
+  { sourceLabel: "UAFIDA Ajustada|EAA", targetRow: 92, validationSign: "positive" },
+  // Latin America
+  { sourceLabel: "Ventas Netas|Latinoamérica", targetRow: 105, validationSign: "positive" },
+  { sourceLabel: "Utilidad Bruta|Latinoamérica", targetRow: 108, validationSign: "positive" },
+  { sourceLabel: "Utilidad de Operación|Latinoamérica", targetRow: 114, validationSign: null },
+  { sourceLabel: "UAFIDA Ajustada|Latinoamérica", targetRow: 119, validationSign: null },
+];
+
 async function seedMappings() {
   const sql = neon(process.env.DATABASE_URL!);
   const db = drizzle(sql);
 
   console.log("Seeding BIMBO field mappings...");
 
-  const values = BIMBO_PROJ_MAPPINGS.map((m) => ({
-    companyId: 1, // BIMBO
+  const projValues = BIMBO_PROJ_MAPPINGS.map((m) => ({
+    companyId: 1,
     colMode: "quarterly_offset" as const,
     sourceSection: m.sourceSection,
     sourceLabel: m.sourceLabel,
@@ -51,8 +76,25 @@ async function seedMappings() {
     validationSign: m.validationSign,
   }));
 
-  const result = await db.insert(fieldMappings).values(values).returning();
-  console.log(`Seeded ${result.length} mappings for BIMBO`);
+  const fatValues = BIMBO_FAT_MAPPINGS.map((m) => ({
+    companyId: 1,
+    colMode: "quarterly_offset" as const,
+    sourceSection: "press_release",
+    sourceLabel: m.sourceLabel,
+    targetSheet: "FAT",
+    targetRow: m.targetRow,
+    targetColBase: "B",
+    targetColStep: 1,
+    baseQuarter: "1Q15",
+    expectedCurrency: "MXN",
+    valueTransform: null,
+    validationSign: m.validationSign,
+  }));
+
+  const result = await db.insert(fieldMappings).values([...projValues, ...fatValues]).returning();
+  const projCount = result.filter((r) => r.targetSheet === "PROJ").length;
+  const fatCount = result.filter((r) => r.targetSheet === "FAT").length;
+  console.log(`Seeded ${projCount} PROJ + ${fatCount} FAT = ${result.length} total mappings for BIMBO`);
 }
 
 seedMappings()

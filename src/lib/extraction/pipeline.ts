@@ -873,6 +873,7 @@ export async function runExtractionPipeline(runId: number): Promise<ExtractionRe
   const isIfrsText = sectionCodes.includes("ifrs_text");
   const visionSections = sectionCodes.filter((c) => c.startsWith("vision:"));
   const isVision = visionSections.length > 0;
+  const hasPresRelease = sectionCodes.includes("press_release");
   const bivaCodes = sectionCodes.filter((c) => c.startsWith("[") && !c.startsWith("vision"));
 
   // Extract data using appropriate method
@@ -897,7 +898,9 @@ export async function runExtractionPipeline(runId: number): Promise<ExtractionRe
       throw new Error("IFRS PDF text extraction returned no data lines");
     }
   } else {
-    sections = await extractPdfTables(fileBuffer, bivaCodes.length > 0 ? bivaCodes : sectionCodes);
+    const codesToExtract = bivaCodes.length > 0 ? bivaCodes : sectionCodes.filter((c) => c !== "press_release");
+    if (hasPresRelease) codesToExtract.push("press_release");
+    sections = await extractPdfTables(fileBuffer, codesToExtract.length > 0 ? codesToExtract : undefined);
     if (sections.length === 0) {
       throw new Error("PDF extraction returned no sections");
     }

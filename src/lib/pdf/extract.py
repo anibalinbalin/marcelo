@@ -161,6 +161,91 @@ def extract_sections(pdf_path, section_codes=None):
 
         return results
 
+PRESS_RELEASE_TABLES = {
+    "Ventas Netas": ["Ventas Netas"],
+    "Utilidad Bruta": ["Utilidad Bruta"],
+    "Utilidad de Operación": ["Utilidad de Operación", "Utilidad de Operacion"],
+    "UAFIDA Ajustada": ["UAFIDA Ajustada", "UAFIDA Aj"],
+}
+
+PRESS_RELEASE_REGIONS = ["Norteamérica", "México", "EAA", "Latinoamérica", "Grupo Bimbo"]
+
+def extract_press_release(pdf_path):
+    """Extract regional breakdown tables from BIVA press release section [105000].
+
+    Returns a PdfSection-compatible structure with code "press_release" where each
+    row label is "TableName|Region" (e.g., "Ventas Netas|México") and values[0]
+    is the quarterly value (already in millions MXN).
+
+    Tables have two header formats:
+      - ['Ventas Netas', '4T25', ...] — title in cell[0], data rows from index 1
+      - ['', 'Utilidad Bruta', None, ...] then ['', '4T25', ...] — title row + header
+        row, data rows from index 2
+    """
+    with pdfplumber.open(pdf_path) as pdf:
+        rows = []
+        found_tables = set()
+
+        for page in pdf.pages[:30]:
+            tables = page.extract_tables()
+            for table in tables:
+                if not table or len(table) < 3:
+                    continue
+
+                # Check first two rows for table title (any cell)
+                header_text = " ".join(str(c or "") for c in table[0]).strip()
+
+                matched_table = None
+                for canonical, aliases in PRESS_RELEASE_TABLES.items():
+                    if canonical in found_tables:
+                        continue
+                    for alias in aliases:
+                        if alias.lower() in header_text.lower():
+                            matched_table = canonical
+                            break
+                    if matched_table:
+                        break
+
+                if not matched_table:
+                    continue
+
+                found_tables.add(matched_table)
+
+                # Determine where data rows start: skip title row + optional
+                # column-header row (contains "4T25" / "1T26" patterns)
+                data_start = 1
+                if len(table) > 1:
+                    row1_text = " ".join(str(c or "") for c in table[1])
+                    if any(p in row1_text for p in ["T2", "Q2", "Cambio", "cambio"]):
+                        data_start = 2
+
+                for data_row in table[data_start:]:
+                    if not data_row or not data_row[0]:
+                        continue
+
+                    region_raw = str(data_row[0]).strip()
+                    region = None
+                    for r in PRESS_RELEASE_REGIONS:
+                        if r.lower() == region_raw.lower():
+                            region = r
+                            break
+                    if not region:
+                        continue
+
+                    qtr_value = parse_number(str(data_row[1]) if len(data_row) > 1 and data_row[1] else "")
+                    if qtr_value is None:
+                        continue
+
+                    label = f"{matched_table}|{region}"
+                    rows.append({"label": label, "values": [qtr_value]})
+
+        return {
+            "code": "press_release",
+            "pages": [],
+            "tables": [{"page": 0, "headers": ["Region", "Quarter"], "rows": rows}] if rows else []
+        }
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python3 extract.py <pdf_path> [section_codes...]", file=sys.stderr)
@@ -169,8 +254,17 @@ if __name__ == "__main__":
     pdf_path = sys.argv[1]
     section_codes = sys.argv[2:] if len(sys.argv) > 2 else None
 
+    include_press_release = False
+    if section_codes and "press_release" in section_codes:
+        include_press_release = True
+        section_codes = [c for c in section_codes if c != "press_release"]
+        if not section_codes:
+            section_codes = None
+
     try:
         results = extract_sections(pdf_path, section_codes)
+        if include_press_release:
+            results.append(extract_press_release(pdf_path))
         print(json.dumps(results, ensure_ascii=False))
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
