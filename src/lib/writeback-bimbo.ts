@@ -7,6 +7,13 @@ type WorkbookFontColor = {
   theme?: number | null;
 };
 
+// Structural black-formula rows that must NOT be overwritten with extracted values.
+// These are template calculations (e.g. COGS=Revenue-GrossProfit) that derive from
+// the blue actuals we write. Same pattern as LREN3's FORMULA_ROW_SET.
+const BIMBO_PROJ_FORMULA_ROWS = new Set([7, 11, 15, 30, 35]);
+const BIMBO_FAT_FORMULA_ROWS = new Set<number>([]);
+const FORMULA_ROW_SET = new Set([...BIMBO_PROJ_FORMULA_ROWS, ...BIMBO_FAT_FORMULA_ROWS]);
+
 function isFormulaLikeCellValue(
   value: unknown,
 ): value is { formula?: string; sharedFormula?: string } {
@@ -14,16 +21,8 @@ function isFormulaLikeCellValue(
     ("formula" in value || "sharedFormula" in value);
 }
 
-/**
- * In BIMBO's template, structural formulas use the default font color (no
- * explicit color = renders black in Excel). Writable cells have explicit
- * non-black colors: blue (FF0000FF) for actuals, red (FFFF0000) for
- * estimates, theme 9 for detail line items.
- *
- * Key difference from LREN3: undefined/null font color → black (preserve).
- */
 function isBimboBlackFormula(color: WorkbookFontColor | undefined): boolean {
-  if (!color) return true;
+  if (!color) return false;
   if (color.theme !== undefined && color.theme !== null) {
     return color.theme === 0;
   }
@@ -40,6 +39,8 @@ export function collectBimboPreservedFormulaTargets(
   const preserved = new Set<string>();
 
   for (const write of writes) {
+    if (!FORMULA_ROW_SET.has(write.row)) continue;
+
     const ws = workbook.getWorksheet(write.sheet);
     if (!ws) continue;
 
