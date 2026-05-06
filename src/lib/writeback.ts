@@ -9,6 +9,7 @@ import { writeBlueValues, type CellWrite } from "@/lib/excel/surgical-writer";
 import { quarterToColOffset, getTargetCol } from "@/lib/quarter";
 import { colLetterToNumber } from "@/lib/excel/reader";
 import { collectLren3PreservedFormulaTargets, buildLren3ProtectedAddrs, buildLren3ForceCloneAddrs, LREN3_CLEAR_ROWS } from "@/lib/writeback-lren3";
+import { collectBimboPreservedFormulaTargets } from "@/lib/writeback-bimbo";
 
 export interface WritebackResult {
   buffer: Buffer;
@@ -87,6 +88,22 @@ export async function generatePopulatedExcel(runId: number): Promise<WritebackRe
   const writebackWarnings: string[] = [];
   let protectedAddrs: Set<string> | undefined;
   let forceCloneAddrs: Set<string> | undefined;
+
+  if (company.ticker === "BIMBOA" && cellWrites.length > 0) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(templateBuffer as never);
+
+    const preservedTargets = collectBimboPreservedFormulaTargets(workbook, cellWrites);
+    if (preservedTargets.size > 0) {
+      writesToApply = cellWrites.filter((write) => {
+        const addr = workbook.getWorksheet(write.sheet)?.getCell(write.row, write.col).address;
+        return !addr || !preservedTargets.has(`${write.sheet}!${addr}`);
+      });
+      writebackWarnings.push(
+        `BIMBO preserved template formulas at ${[...preservedTargets].sort().join(", ")}`,
+      );
+    }
+  }
 
   if (company.ticker === "LREN3" && cellWrites.length > 0) {
     const workbook = new ExcelJS.Workbook();

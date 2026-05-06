@@ -29,6 +29,16 @@ const BIMBO_PROJ_MAPPINGS = [
   { sourceSection: "[210000]", sourceLabel: "Total de pasivos circulantes", targetSheet: "PROJ", targetRow: 60, valueTransform: "divide_1000000", validationSign: "positive" },
   { sourceSection: "[210000]", sourceLabel: "Total pasivos", targetSheet: "PROJ", targetRow: 70, valueTransform: "divide_1000000", validationSign: "positive" },
   { sourceSection: "[210000]", sourceLabel: "Total de capital contable", targetSheet: "PROJ", targetRow: 80, valueTransform: "divide_1000000", validationSign: "positive" },
+
+  // Balance Sheet detail (Section [210000]) — non-black-formula rows
+  { sourceSection: "[210000]", sourceLabel: "Clientes y otras cuentas por cobrar", targetSheet: "PROJ", targetRow: 63, valueTransform: "divide_1000000", validationSign: "positive" },
+  { sourceSection: "[210000]", sourceLabel: "Inventarios", targetSheet: "PROJ", targetRow: 64, valueTransform: "divide_1000000", validationSign: "positive" },
+  { sourceSection: "[210000]", sourceLabel: "Propiedades, planta y equipo", targetSheet: "PROJ", targetRow: 69, valueTransform: "divide_1000000", validationSign: "positive" },
+  { sourceSection: "[210000]", sourceLabel: "Crédito mercantil", targetSheet: "PROJ", targetRow: 76, valueTransform: "divide_1000000", validationSign: "positive" },
+  { sourceSection: "[210000]", sourceLabel: "Otros pasivos financieros a corto plazo", targetSheet: "PROJ", targetRow: 82, valueTransform: "divide_1000000", validationSign: "positive" },
+  { sourceSection: "[210000]", sourceLabel: "Proveedores y otras cuentas por pagar a corto plazo", targetSheet: "PROJ", targetRow: 83, valueTransform: "divide_1000000", validationSign: "positive" },
+  { sourceSection: "[210000]", sourceLabel: "Otros pasivos financieros a largo plazo", targetSheet: "PROJ", targetRow: 88, valueTransform: "divide_1000000", validationSign: "positive" },
+  { sourceSection: "[210000]", sourceLabel: "Pasivos por impuestos diferidos", targetSheet: "PROJ", targetRow: 90, valueTransform: "divide_1000000", validationSign: "positive" },
 ];
 
 // FAT sheet — regional breakdown from press release tables (already in millions MXN)
