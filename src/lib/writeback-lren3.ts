@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import type { CellWrite } from "./excel/surgical-writer";
-import { LREN3_PROJ_FORMULA_ROWS, LREN3_FAT_FORMULA_ROWS } from "@/db/lren3-canonical";
+import { isFormulaLikeCellValue, type WorkbookFontColor } from "./excel/formula-protection";
+import { LREN3_PROJ_FORMULA_ROWS, LREN3_FAT_FORMULA_ROWS } from "../db/lren3-canonical";
 
 const FORMULA_ROW_SET = new Set<number>([
   ...LREN3_PROJ_FORMULA_ROWS,
@@ -36,19 +37,6 @@ export function buildLren3ForceCloneAddrs(targetCol: number): Set<string> {
   const addrs = new Set<string>();
   for (const r of FAT_FORCE_CLONE_ROWS) addrs.add(`FAT!${col}${r}`);
   return addrs;
-}
-
-type WorkbookFontColor = {
-  argb?: string | null;
-  rgb?: string | null;
-  theme?: number | null;
-};
-
-function isFormulaLikeCellValue(
-  value: unknown,
-): value is { formula?: string; sharedFormula?: string } {
-  return typeof value === "object" && value !== null &&
-    ("formula" in value || "sharedFormula" in value);
 }
 
 function isBlackLikeFormulaColor(color: WorkbookFontColor | undefined): boolean {
