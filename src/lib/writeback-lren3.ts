@@ -40,7 +40,7 @@ export function buildLren3ForceCloneAddrs(targetCol: number): Set<string> {
 }
 
 function isBlackLikeFormulaColor(color: WorkbookFontColor | undefined): boolean {
-  if (!color) return false;
+  if (!color) return true;
   if (color.theme !== undefined && color.theme !== null) {
     return color.theme === 0;
   }

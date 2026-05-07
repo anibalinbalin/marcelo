@@ -13,7 +13,7 @@ export function isFormulaLikeCellValue(
 }
 
 export function isBlackFormulaFontColor(color: WorkbookFontColor | undefined): boolean {
-  if (!color) return false;
+  if (!color) return true;
   if (color.theme !== undefined && color.theme !== null) {
     return color.theme === 0 && (color.tint === undefined || color.tint === null || color.tint === 0);
   }

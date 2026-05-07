@@ -62,6 +62,21 @@ describe("BIMBO writeback filtering", () => {
     expect([...preserved].sort()).toEqual(["FAT!AS24", "PROJ!AS7"]);
   });
 
+  it("preserves formula cells with undefined color (theme-inherited black)", () => {
+    const workbook = new ExcelJS.Workbook();
+    const proj = workbook.addWorksheet("PROJ");
+    const col = colLetterToNumber("AS");
+
+    proj.getCell(7, col).value = { formula: "+AS9-AS5" };
+    // No font.color set — inherits black from workbook theme
+
+    const preserved = collectBimboPreservedFormulaTargets(workbook, [
+      { sheet: "PROJ", row: 7, col, value: 1 },
+    ]);
+
+    expect([...preserved]).toEqual(["PROJ!AS7"]);
+  });
+
   it("does not treat tinted theme-0 text as black formula text", () => {
     const workbook = new ExcelJS.Workbook();
     const proj = workbook.addWorksheet("PROJ");
