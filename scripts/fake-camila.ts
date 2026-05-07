@@ -67,7 +67,7 @@ import {
 } from "../src/db/schema";
 import { runExtractionPipeline } from "../src/lib/extraction/pipeline";
 import { approveValues } from "../src/app/actions/runs";
-import { recalcAndRead } from "./lib/excel-recalc";
+import { recalcAndRead } from "./lib/excel-recalc-cua";
 import {
   assertCellValue,
   assertNoUnexpectedWarnings,
