@@ -67,7 +67,8 @@ import {
 } from "../src/db/schema";
 import { runExtractionPipeline } from "../src/lib/extraction/pipeline";
 import { approveValues } from "../src/app/actions/runs";
-import { recalcAndRead } from "./lib/excel-recalc-cua";
+import { recalcAndRead as recalcAndReadCua } from "./lib/excel-recalc-cua";
+import { recalcAndRead as recalcAndReadAppleScript } from "./lib/excel-recalc";
 import {
   assertCellValue,
   assertNoUnexpectedWarnings,
@@ -302,7 +303,13 @@ async function main() {
   // --- STEP 8: open in Excel, force recalc, read FAT cells
   console.log(`\n=== STEP 8: Excel recalc + read ${Object.keys(exp.fatAfterRecalc).length} cells ===`);
   const cellRefs = Object.keys(exp.fatAfterRecalc);
-  const readback = await recalcAndRead(outPath, exp.fatSheet, cellRefs);
+  let readback: Record<string, number | null>;
+  try {
+    readback = await recalcAndReadCua(outPath, exp.fatSheet, cellRefs);
+  } catch (e) {
+    console.warn(`  CUA recalc failed, falling back to AppleScript: ${(e as Error).message}`);
+    readback = await recalcAndReadAppleScript(outPath, exp.fatSheet, cellRefs);
+  }
   for (const [cellRef, expected] of Object.entries(exp.fatAfterRecalc)) {
     results.push(assertCellValue(`${exp.fatSheet}!${cellRef}`, expected, readback[cellRef]));
   }

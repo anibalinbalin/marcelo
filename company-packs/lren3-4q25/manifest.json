@@ -1,0 +1,25 @@
+{
+  "id": "lren3-4q25",
+  "companyId": 7,
+  "ticker": "LREN3",
+  "companyName": "Lojas Renner",
+  "quarter": "4Q25",
+  "status": "certification-active",
+  "sourceFile": "public/camila/Renner Planilhas e Fundamentos  (6).xlsx",
+  "sourceSha256": "62ca8179e27448db0997af4b622e8dde689c9935e08b4751f1f4e4eabd9c9d00",
+  "expectationsModule": "expectations/lren3-4q25.ts",
+  "minimumAssertions": {
+    "preApprovalCells": 11,
+    "postRecalcCells": 25,
+    "duplicatePairs": 5,
+    "minExtractedValues": 60
+  },
+  "humanGate": "Camila only reviews after this pack passes preflight plus full fake-camila certification.",
+  "knownRisksCovered": [
+    "wrong source workbook",
+    "stale active mappings",
+    "duplicate-label collapse",
+    "formula-preservation regressions",
+    "FAT recalc staleness"
+  ]
+}

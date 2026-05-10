@@ -8,7 +8,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:push": "dotenv -e .env.local -- drizzle-kit push"
+    "db:push": "dotenv -e .env.local -- drizzle-kit push",
+    "verify:company": "npx tsx scripts/verify-company-pack.ts",
+    "verify:companies": "npx tsx scripts/verify-company-pack.ts",
+    "certify:company": "npx tsx scripts/verify-company-pack.ts --full"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.51",
