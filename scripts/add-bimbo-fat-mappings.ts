@@ -19,7 +19,6 @@ import { fieldMappings } from "../src/db/schema";
 const BIMBO_FAT_MAPPINGS = [
   // México
   { sourceLabel: "Ventas Netas|México", targetRow: 23, validationSign: "positive" },
-  { sourceLabel: "Utilidad Bruta|México", targetRow: 27, validationSign: "positive" },
   { sourceLabel: "Utilidad de Operación|México", targetRow: 33, validationSign: "positive" },
   { sourceLabel: "UAFIDA Ajustada|México", targetRow: 38, validationSign: "positive" },
   // US & Canada (Norteamérica)
@@ -29,12 +28,10 @@ const BIMBO_FAT_MAPPINGS = [
   { sourceLabel: "UAFIDA Ajustada|Norteamérica", targetRow: 64, validationSign: "positive" },
   // EAA
   { sourceLabel: "Ventas Netas|EAA", targetRow: 77, validationSign: "positive" },
-  { sourceLabel: "Utilidad Bruta|EAA", targetRow: 81, validationSign: "positive" },
   { sourceLabel: "Utilidad de Operación|EAA", targetRow: 87, validationSign: null },
   { sourceLabel: "UAFIDA Ajustada|EAA", targetRow: 92, validationSign: "positive" },
   // Latin America
   { sourceLabel: "Ventas Netas|Latinoamérica", targetRow: 105, validationSign: "positive" },
-  { sourceLabel: "Utilidad Bruta|Latinoamérica", targetRow: 108, validationSign: "positive" },
   { sourceLabel: "Utilidad de Operación|Latinoamérica", targetRow: 114, validationSign: null },
   { sourceLabel: "UAFIDA Ajustada|Latinoamérica", targetRow: 119, validationSign: null },
 ];

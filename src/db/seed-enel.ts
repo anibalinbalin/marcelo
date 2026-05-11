@@ -5,9 +5,9 @@ import { companies, fieldMappings } from "./schema";
 const ENEL_MAPPINGS = [
   // Income Statement (PDF labels in Spanish IFRS)
   { sourceLabel: "Ingresos de actividades ordinarias", targetRow: 11, valueTransform: "divide_1000", validationSign: "positive" },
-  { sourceLabel: "Costo de actividades ordinarias", targetRow: 15, valueTransform: "negate_divide_1000", validationSign: "negative" },
+  { sourceLabel: "Materias primas y consumibles utilizados", targetRow: 15, valueTransform: "negate_divide_1000", validationSign: "negative" },
   { sourceLabel: "Margen de contribución", targetRow: 19, valueTransform: "divide_1000", validationSign: "positive" },
-  { sourceLabel: "Gastos de administración", targetRow: 21, valueTransform: "negate_divide_1000", validationSign: "negative" },
+  { sourceLabel: "Otros gastos por naturaleza", targetRow: 21, valueTransform: "negate_divide_1000", validationSign: "negative" },
   { sourceLabel: "Resultado operacional", targetRow: 22, valueTransform: "divide_1000", validationSign: "positive" },
   { sourceLabel: "Ingresos financieros", targetRow: 24, valueTransform: "divide_1000", validationSign: "positive" },
   { sourceLabel: "Costos financieros", targetRow: 25, valueTransform: "negate_divide_1000", validationSign: "negative" },

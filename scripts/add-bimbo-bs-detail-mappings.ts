@@ -33,7 +33,7 @@ const BIMBO_BS_DETAIL_MAPPINGS = [
 
   // Non-Current Liabilities detail (red rows — projections → overwrite with actuals)
   { sourceLabel: "Otros pasivos financieros a largo plazo", targetRow: 88, validationSign: "positive" },
-  { sourceLabel: "Pasivos por impuestos diferidos", targetRow: 90, validationSign: "positive" },
+  { sourceLabel: "Pasivo por impuestos diferidos", targetRow: 90, validationSign: "positive" },
 ];
 
 async function main() {

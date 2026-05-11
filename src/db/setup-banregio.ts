@@ -43,7 +43,7 @@ const BANREGIO_MAPPINGS = [
   { sourceSection: "vision:33,34", sourceLabel: "Efectivo y Equivalentes de Efectivo", targetSheet: "PROJ", targetRow: 29, sourceCol: "4", valueTransform: null, validationSign: "positive" },
   { sourceSection: "vision:33,34", sourceLabel: "Inversiones en Instrumentos Financieros", targetSheet: "PROJ", targetRow: 30, sourceCol: "4", valueTransform: null, validationSign: "positive" },
   { sourceSection: "vision:33,34", sourceLabel: "Instrumentos Financieros Derivados", targetSheet: "PROJ", targetRow: 31, sourceCol: "4", valueTransform: null, validationSign: null },
-  { sourceSection: "vision:33,34", sourceLabel: "Estimacion preventiva para riesgos crediticios", targetSheet: "PROJ", targetRow: 42, sourceCol: "4", valueTransform: "negate", validationSign: "negative" },
+  { sourceSection: "vision:33,34", sourceLabel: "Estimación preventiva para riesgos crediticios", targetSheet: "PROJ", targetRow: 42, sourceCol: "4", valueTransform: "negate", validationSign: "negative" },
   { sourceSection: "vision:33,34", sourceLabel: "TOTAL ACTIVO", targetSheet: "PROJ", targetRow: 28, sourceCol: "4", valueTransform: null, validationSign: "positive" },
   { sourceSection: "vision:33,34", sourceLabel: "Captación tradicional", targetSheet: "PROJ", targetRow: 52, sourceCol: "4", valueTransform: null, validationSign: "positive" },
   { sourceSection: "vision:33,34", sourceLabel: "TOTAL PASIVO", targetSheet: "PROJ", targetRow: 51, sourceCol: "4", valueTransform: null, validationSign: "positive" },

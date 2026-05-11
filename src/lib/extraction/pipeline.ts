@@ -336,6 +336,7 @@ function findValueInText(
   // Pass 1: exact match
   for (const line of filtered) {
     const stripped = stripNoteRef(line.label).toLowerCase().trim();
+    if (!stripped) continue;
     if (stripped === normalized) {
       const result = tryMatch(line, 1.0);
       if (result) return result;
@@ -346,6 +347,7 @@ function findValueInText(
   let bestStartsWith: { line: ParsedLine; overlap: number } | null = null;
   for (const line of filtered) {
     const stripped = stripNoteRef(line.label).toLowerCase().trim();
+    if (!stripped) continue;
     if (stripped.startsWith(normalized) || normalized.startsWith(stripped)) {
       const overlap = Math.min(stripped.length, normalized.length);
       if (overlap >= 10 && (!bestStartsWith || stripped.length > bestStartsWith.overlap)) {
@@ -361,6 +363,7 @@ function findValueInText(
   // Pass 3: contains match
   for (const line of filtered) {
     const stripped = stripNoteRef(line.label).toLowerCase().trim();
+    if (!stripped) continue;
     if (stripped.includes(normalized) || normalized.includes(stripped)) {
       const result = tryMatch(line, 0.75);
       if (result) return result;
@@ -413,7 +416,7 @@ async function extractFromExcelPython(
 
       // Run Python extractor (remote API or local subprocess)
       let result: string;
-      if (process.env.EXTRACTION_API_URL) {
+      if (process.env.EXTRACTION_API_URL && !process.env.FORCE_LOCAL_EXCEL_EXTRACTION) {
         const form = new FormData();
         form.append("file", new Blob([new Uint8Array(fileBuffer)], {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -570,7 +573,7 @@ async function extractFromExcel(
   // ExcelJS inflates xlsx into in-memory DOM; complex workbooks blow up the heap.
   const MAX_EXCELJS_SIZE = 2 * 1024 * 1024; // 2MB
   if (fileBuffer.length > MAX_EXCELJS_SIZE) {
-    if (!process.env.EXTRACTION_API_URL) {
+    if (!process.env.EXTRACTION_API_URL && !process.env.FORCE_LOCAL_EXCEL_EXTRACTION) {
       throw new Error(`Excel file too large for ExcelJS (${(fileBuffer.length / 1024 / 1024).toFixed(1)}MB) and no EXTRACTION_API_URL configured`);
     }
     return extractFromExcelPython(fileBuffer, mappings, runId, errors);
