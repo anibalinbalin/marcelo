@@ -585,6 +585,284 @@ async function extractFromExcelPython(
   }
 }
 
+// ── BIVA XLSX extraction ────────────────────────────────────────────────────
+
+/**
+ * Detect whether an Excel workbook is a BIVA quarterly filing.
+ * BIVA XLSX files have sheet names like "110000", "210000", "310000", "520000"
+ * (or with trailing text like "610000  Actual").
+ */
+function isBivaExcel(sheetNames: string[]): boolean {
+  const bivaPattern = /^\d{6}/;
+  const bivaSheets = sheetNames.filter((s) => bivaPattern.test(s.trim()));
+  return bivaSheets.length >= 3;
+}
+
+/**
+ * Build source-judge evidence text from a BIVA XLSX workbook.
+ * Mirrors buildPdfSectionJudgeEvidence but reads from Excel sheets.
+ */
+function buildBivaExcelJudgeEvidence(
+  wb: import("exceljs").Workbook,
+  sheetNames: string[]
+): string {
+  const lines: string[] = [];
+  for (const name of sheetNames) {
+    const ws = wb.getWorksheet(name);
+    if (!ws) continue;
+    lines.push(`SECTION [${name.trim().replace(/\s+.*/, "")}]`);
+    for (let r = 3; r <= ws.rowCount; r++) {
+      const label = ws.getCell(r, 1).value;
+      if (!label) continue;
+      const rawB = ws.getCell(r, 2).value;
+      const valB = rawB && typeof rawB === "object" && "result" in rawB
+        ? (rawB as { result: unknown }).result
+        : rawB;
+      const rawC = ws.getCell(r, 3).value;
+      const valC = rawC && typeof rawC === "object" && "result" in rawC
+        ? (rawC as { result: unknown }).result
+        : rawC;
+      lines.push(`${String(label).trim()}: ${valB ?? "null"} | ${valC ?? "null"}`);
+      if (lines.length >= 220) return lines.join("\n");
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Resolve a mapping's sourceSection (e.g., "[310000]") to an actual sheet name
+ * in the BIVA workbook (e.g., "310000" or "[310000] Estado de resultados...").
+ */
+function resolveBivaSheetName(
+  sectionCode: string,
+  sheetNames: string[]
+): string | null {
+  const code = sectionCode.replace(/[\[\]]/g, "").trim();
+  for (const name of sheetNames) {
+    if (name.trim().startsWith(code)) return name;
+  }
+  return null;
+}
+
+/**
+ * Extract financial data from a BIVA XLSX quarterly filing.
+ *
+ * BIVA XLSX structure:
+ *   - Sheets named by section code: "310000", "210000", "520000", etc.
+ *   - Column A: labels, Column B: current quarter, Column C: prior year
+ *   - Row 1: section title, Row 3: headers, Row 4+: data
+ */
+async function extractFromBivaExcel(
+  fileBuffer: Buffer,
+  mappings: typeof fieldMappings.$inferSelect[],
+  runId: number,
+  companyId: number,
+  errors: string[],
+  sheetNames: string[]
+): Promise<ExtractionResult> {
+  const ExcelJS = await import("exceljs");
+  const wb = new ExcelJS.default.Workbook();
+  await wb.xlsx.read(
+    new (await import("stream")).PassThrough().end(fileBuffer) as never
+  );
+
+  const db = getDb();
+
+  const valuesToInsert: {
+    runId: number;
+    mappingId: number;
+    extractedValue: string;
+    confidence: number;
+  }[] = [];
+
+  // Cache: sectionCode → { label→value, row→value }
+  const labelCache = new Map<string, Map<string, number>>();
+  const rowCache = new Map<string, Map<number, number>>();
+
+  for (const mapping of mappings) {
+    if (!mapping.sourceSection) {
+      errors.push(`Mapping ${mapping.id} (${mapping.sourceLabel}) missing sourceSection`);
+      continue;
+    }
+
+    const sectionCode = mapping.sourceSection;
+
+    if (!labelCache.has(sectionCode)) {
+      const resolvedSheet = resolveBivaSheetName(sectionCode, sheetNames);
+      if (!resolvedSheet) {
+        errors.push(`No sheet matching section "${sectionCode}" in BIVA workbook`);
+        labelCache.set(sectionCode, new Map());
+        rowCache.set(sectionCode, new Map());
+        continue;
+      }
+
+      const ws = wb.getWorksheet(resolvedSheet);
+      if (!ws) {
+        errors.push(`Sheet "${resolvedSheet}" not found`);
+        labelCache.set(sectionCode, new Map());
+        rowCache.set(sectionCode, new Map());
+        continue;
+      }
+
+      // Detect the data column from BIVA headers (row 3 has richText period labels).
+      // "Trimestre Actual" or "Año Actual" → current period; fall back to column B.
+      let dataCol = 2;
+      for (let c = 2; c <= 4; c++) {
+        const hdr = ws.getCell(3, c).value;
+        if (!hdr) continue;
+        const hdrText = typeof hdr === "object" && hdr !== null && "richText" in (hdr as unknown as Record<string, unknown>)
+          ? ((hdr as unknown as { richText: { text: string }[] }).richText.map((r) => r.text).join(""))
+          : String(hdr);
+        if (/a[ñn]o\s*actual|trimestre\s*actual/i.test(hdrText)) {
+          dataCol = c;
+          break;
+        }
+      }
+
+      const lMap = new Map<string, number>();
+      const rMap = new Map<number, number>();
+      for (let r = 3; r <= ws.rowCount; r++) {
+        const labelCell = ws.getCell(r, 1).value;
+        if (!labelCell) continue;
+        const label = String(labelCell).trim().toLowerCase();
+
+        const rawB = ws.getCell(r, dataCol).value;
+        const val = rawB && typeof rawB === "object" && "result" in rawB
+          ? (rawB as { result: unknown }).result
+          : rawB;
+        if (val == null || typeof val !== "number") continue;
+
+        rMap.set(r, val);
+        if (label) lMap.set(label, val);
+      }
+      labelCache.set(sectionCode, lMap);
+      rowCache.set(sectionCode, rMap);
+    }
+
+    const labelMap = labelCache.get(sectionCode)!;
+    const rMap = rowCache.get(sectionCode)!;
+
+    let value: number | null = null;
+
+    // Multi-row aggregation
+    const sumRowKeys = parseSumRows(mapping.valueTransform);
+    if (sumRowKeys && rMap) {
+      let sum = 0;
+      let found = 0;
+      for (const r of sumRowKeys) {
+        const v = rMap.get(r);
+        if (v !== undefined) { sum += v; found++; }
+      }
+      if (found > 0) value = sum;
+      else errors.push(`sum_rows: none of [${sumRowKeys}] found in ${sectionCode}`);
+    }
+
+    // Row-based lookup
+    if (value === null && mapping.sourceRow && rMap.has(mapping.sourceRow)) {
+      value = rMap.get(mapping.sourceRow)!;
+    }
+
+    // Label-based fuzzy lookup
+    if (value === null && mapping.sourceLabel) {
+      value = lookupExcelLabelValue(labelMap, mapping.sourceLabel);
+    }
+
+    if (value === null) {
+      errors.push(`No match for "${mapping.sourceLabel}" in BIVA section ${sectionCode}`);
+      continue;
+    }
+
+    const transformed = applyTransform(value, mapping.valueTransform);
+    valuesToInsert.push({
+      runId,
+      mappingId: mapping.id,
+      extractedValue: transformed.toFixed(6),
+      confidence: 1.0,
+    });
+  }
+
+  if (valuesToInsert.length === 0) {
+    throw new Error("BIVA XLSX extraction matched zero values — check mappings and source file");
+  }
+
+  const inserted = await db.insert(extractedValues).values(valuesToInsert).returning();
+
+  const validationInputs: ValidationInput[] = inserted.map((v) => {
+    const mapping = mappings.find((m) => m.id === v.mappingId)!;
+    return {
+      id: v.id,
+      extractedValue: v.extractedValue!,
+      confidence: v.confidence ?? 1.0,
+      validationSign: mapping.validationSign,
+      sourceLabel: mapping.sourceLabel,
+    };
+  });
+
+  const validationResults = runValidation(validationInputs);
+  for (const result of validationResults) {
+    await db
+      .update(extractedValues)
+      .set({ validationStatus: result.status, validationMessage: result.message })
+      .where(eq(extractedValues.id, result.id));
+  }
+
+  const adversarialCheck = await maybeRunAdversarialValidation(
+    db,
+    inserted,
+    mappings,
+    validationResults
+  );
+
+  // Source-grounded DeepSeek judge — same as PDF path
+  const sourceJudgeEvidence = buildBivaExcelJudgeEvidence(wb, sheetNames);
+  const sourceJudgeResult = await runDeepSeekSourceJudge(
+    companyId,
+    inserted.map((value) => {
+      const mapping = mappings.find((m) => m.id === value.mappingId)!;
+      return {
+        id: value.id,
+        sourceLabel: mapping.sourceLabel,
+        sourceSection: mapping.sourceSection,
+        extractedValue: value.extractedValue,
+        targetSheet: mapping.targetSheet,
+        targetRow: mapping.targetRow,
+        valueTransform: mapping.valueTransform,
+      };
+    }),
+    sourceJudgeEvidence,
+  );
+
+  const sourceJudgeFlaggedIds = new Set<number>();
+  if (sourceJudgeResult.status === "error") {
+    errors.push(sourceJudgeResult.message);
+  }
+  for (const failure of sourceJudgeResult.failures) {
+    errors.push(failure.message);
+    if (failure.valueId === null) continue;
+    sourceJudgeFlaggedIds.add(failure.valueId);
+    await db
+      .update(extractedValues)
+      .set({ validationStatus: failure.status, validationMessage: failure.message })
+      .where(eq(extractedValues.id, failure.valueId));
+  }
+
+  await db
+    .update(extractionRuns)
+    .set({ status: "extracted", extractedAt: new Date() })
+    .where(eq(extractionRuns.id, runId));
+
+  return {
+    extracted: inserted.length,
+    validated: validationResults.filter(
+      (r) => r.status === "pass" && !sourceJudgeFlaggedIds.has(r.id),
+    ).length,
+    adversarialTriggered: adversarialCheck.triggered,
+    adversarialResult: adversarialCheck.result?.status,
+    sourceJudgeResult: sourceJudgeResult.status,
+    errors,
+  };
+}
+
 // ── Excel source extraction (ExcelJS) ─────────────────────────────────────
 
 /**
@@ -865,6 +1143,12 @@ export async function runExtractionPipeline(runId: number): Promise<ExtractionRe
 
   if (!isPdf) {
     const workbookSheets = await getWorkbookSheetNames(fileBuffer);
+
+    // Route BIVA XLSX (sheets named "110000", "210000", "310000", ...) to dedicated extractor
+    if (workbookSheets && isBivaExcel(workbookSheets)) {
+      return extractFromBivaExcel(fileBuffer, mappings, runId, run.companyId!, errors, workbookSheets);
+    }
+
     if (workbookSheets && workbookSheets.length > 0) {
       const expectedSheets = [
         ...new Set(
