@@ -14,6 +14,7 @@ interface ApprovalBarProps {
   onDownload: () => void;
   isApproved: boolean;
   isDownloadReady: boolean;
+  hasBlockingFailures?: boolean;
 }
 
 export function ApprovalBar({
@@ -26,6 +27,7 @@ export function ApprovalBar({
   onDownload,
   isApproved,
   isDownloadReady,
+  hasBlockingFailures = false,
 }: ApprovalBarProps) {
   return (
     <div className="fixed inset-x-0 bottom-0 z-50 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur-sm">
@@ -63,7 +65,7 @@ export function ApprovalBar({
         <div className="flex items-center gap-2">
           <Button
             onClick={onApprove}
-            disabled={isApproved || !analystName.trim()}
+            disabled={isApproved || !analystName.trim() || hasBlockingFailures}
             size="lg"
           >
             <CheckCircleIcon className="size-4" data-icon="inline-start" />

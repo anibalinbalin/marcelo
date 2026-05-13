@@ -76,6 +76,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
     message: string;
     details: string[];
   } | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
   const [cellsWritten, setCellsWritten] = useState<number | null>(null);
   const [localStatus, setLocalStatus] = useState(run.status);
   const [localApprovedBy, setLocalApprovedBy] = useState(run.approvedBy);
@@ -108,9 +109,14 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
           passing++;
           break;
         case "warning":
+        case "needs_review":
           warning++;
           break;
         case "fail":
+        case "error":
+        case "source_guard_failed":
+        case "deepseek_judge_failed":
+        case "deepseek_judge_needs_review":
           fail++;
           break;
         default:
@@ -132,6 +138,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
     if (!analystName.trim()) return;
 
     setIsApproving(true);
+    setApprovalError(null);
     try {
       const overrideList = Array.from(overrides.entries()).map(
         ([id, value]) => ({ id, value })
@@ -140,8 +147,10 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
       setLocalStatus("approved");
       setLocalApprovedBy(analystName.trim());
       router.refresh();
-    } catch {
-      // Error handling -- could add toast here
+    } catch (err) {
+      setApprovalError(
+        err instanceof Error ? err.message : "Approval failed",
+      );
     } finally {
       setIsApproving(false);
     }
@@ -279,6 +288,14 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
           </div>
         )}
 
+        {approvalError && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertCircleIcon className="size-4" />
+            <AlertTitle>Approval blocked</AlertTitle>
+            <AlertDescription>{approvalError}</AlertDescription>
+          </Alert>
+        )}
+
         {/* Download success */}
         {cellsWritten !== null && !downloadError && (
           <Alert className="mb-6 border-success/25 bg-success/5">
@@ -347,10 +364,10 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
               {/* Inline help when there are flagged rows */}
               {warningCount + failCount > 0 && (
                 <p className="text-xs text-muted-foreground">
-                  Rows flagged below failed an automated sanity check. The
-                  reason appears under the status. Click the value to override
-                  it with what the source document shows, or approve as-is if
-                  the extracted value is correct.
+                  Rows flagged below failed an automated sanity check. Source
+                  guard and DeepSeek source-judge failures block approval and
+                  must be fixed by re-running extraction with a corrected parser
+                  or mapping.
                 </p>
               )}
 
@@ -409,6 +426,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
             onDownload={handleDownload}
             isApproved={isApproved || isApproving}
             isDownloadReady={!isDownloading}
+            hasBlockingFailures={failCount > 0}
           />
         )}
     </div>

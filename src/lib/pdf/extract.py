@@ -183,13 +183,13 @@ def extract_press_release(pdf_path):
         row, data rows from index 2
     """
     with pdfplumber.open(pdf_path) as pdf:
-        rows = []
-        found_tables = set()
+        rows_by_label = {}
+        current_table = None
 
         for page in pdf.pages[:30]:
             tables = page.extract_tables()
             for table in tables:
-                if not table or len(table) < 3:
+                if not table:
                     continue
 
                 # Check first two rows for table title (any cell)
@@ -197,8 +197,6 @@ def extract_press_release(pdf_path):
 
                 matched_table = None
                 for canonical, aliases in PRESS_RELEASE_TABLES.items():
-                    if canonical in found_tables:
-                        continue
                     for alias in aliases:
                         if alias.lower() in header_text.lower():
                             matched_table = canonical
@@ -206,18 +204,21 @@ def extract_press_release(pdf_path):
                     if matched_table:
                         break
 
-                if not matched_table:
+                if matched_table:
+                    current_table = matched_table
+                    # Determine where data rows start: skip title row + optional
+                    # column-header row (contains "1T26" / "Cambio" patterns)
+                    data_start = 1
+                    if len(table) > 1:
+                        row1_text = " ".join(str(c or "") for c in table[1])
+                        if any(p in row1_text for p in ["T2", "Q2", "T26", "Q26", "Cambio", "cambio"]):
+                            data_start = 2
+                elif current_table:
+                    # Some press-release tables split across PDF pages. The
+                    # continuation table repeats regional rows but not the title.
+                    data_start = 0
+                else:
                     continue
-
-                found_tables.add(matched_table)
-
-                # Determine where data rows start: skip title row + optional
-                # column-header row (contains "4T25" / "1T26" patterns)
-                data_start = 1
-                if len(table) > 1:
-                    row1_text = " ".join(str(c or "") for c in table[1])
-                    if any(p in row1_text for p in ["T2", "Q2", "Cambio", "cambio"]):
-                        data_start = 2
 
                 for data_row in table[data_start:]:
                     if not data_row or not data_row[0]:
@@ -236,13 +237,13 @@ def extract_press_release(pdf_path):
                     if qtr_value is None:
                         continue
 
-                    label = f"{matched_table}|{region}"
-                    rows.append({"label": label, "values": [qtr_value]})
+                    label = f"{current_table}|{region}"
+                    rows_by_label[label] = {"label": label, "values": [qtr_value]}
 
         return {
             "code": "press_release",
             "pages": [],
-            "tables": [{"page": 0, "headers": ["Region", "Quarter"], "rows": rows}] if rows else []
+            "tables": [{"page": 0, "headers": ["Region", "Quarter"], "rows": list(rows_by_label.values())}] if rows_by_label else []
         }
 
 

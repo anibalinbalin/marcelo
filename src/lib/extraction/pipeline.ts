@@ -23,6 +23,14 @@ import {
   type ExtractedValueForValidation,
   type AdversarialResult,
 } from "@/lib/validation/engine";
+import {
+  SOURCE_GUARD_FAILED,
+  runSourceGuards,
+} from "@/lib/validation/source-guards";
+import {
+  extractBimboJudgeEvidence,
+  runDeepSeekSourceJudge,
+} from "@/lib/validation/source-judge";
 
 // ── Extraction result type ──────────────────────────────────────────────────
 
@@ -34,6 +42,8 @@ export interface ExtractionResult {
   adversarialTriggered?: boolean;
   /** Result of adversarial validation if triggered */
   adversarialResult?: AdversarialResult["status"];
+  /** Result of the source-grounded DeepSeek judge, when applicable/configured */
+  sourceJudgeResult?: "pass" | "block" | "needs_review" | "skipped" | "error";
 }
 
 // ── Value transforms ────────────────────────────────────────────────────────
@@ -69,6 +79,29 @@ function applyTransform(
     default:
       return rawValue;
   }
+}
+
+function buildPdfSectionJudgeEvidence(sections: PdfSection[]): string {
+  const lines: string[] = [];
+  for (const section of sections) {
+    lines.push(`SECTION ${section.code}`);
+    for (const table of section.tables) {
+      lines.push(`page=${table.page} headers=${table.headers.join(" | ")}`);
+      for (const row of table.rows) {
+        const values = row.values.map((value) => value ?? "null").join(" | ");
+        lines.push(`${row.label}: ${values}`);
+        if (lines.length >= 220) return lines.join("\n");
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function buildIfrsTextJudgeEvidence(lines: ParsedLine[]): string {
+  return lines
+    .slice(0, 220)
+    .map((line) => `${line.label} [page=${line.page}]: ${line.values.join(" | ")}`)
+    .join("\n");
 }
 
 // ── Adversarial validation helper ───────────────────────────────────────────
@@ -1028,7 +1061,87 @@ export async function runExtractionPipeline(runId: number): Promise<ExtractionRe
     validationResults
   );
 
-  // 10. Update run status
+  // 10. Run source-specific guards. These catch parser/table drift that can
+  // still look numerically valid to generic sign/confidence validation.
+  const sourceGuardFailures = runSourceGuards(
+    run.companyId,
+    inserted.map((value) => {
+      const mapping = mappings.find((m) => m.id === value.mappingId)!;
+      return {
+        id: value.id,
+        sourceLabel: mapping.sourceLabel,
+        sourceSection: mapping.sourceSection,
+        extractedValue: value.extractedValue,
+      };
+    }),
+  );
+  const sourceGuardFailedIds = new Set<number>();
+  for (const failure of sourceGuardFailures) {
+    errors.push(failure.message);
+    if (failure.valueId === null) continue;
+    sourceGuardFailedIds.add(failure.valueId);
+    await db
+      .update(extractedValues)
+      .set({
+        validationStatus: SOURCE_GUARD_FAILED,
+        validationMessage: failure.message,
+      })
+      .where(eq(extractedValues.id, failure.valueId));
+  }
+
+  // 11. Run the source-grounded DeepSeek judge for every company. BIMBO keeps
+  // its bounded raw PDF snippet because it catches the press-release table
+  // drift independently; other PDF modes use the bounded extracted source rows.
+  let sourceJudgeEvidence = isIfrsText
+    ? buildIfrsTextJudgeEvidence(textLines)
+    : buildPdfSectionJudgeEvidence(sections);
+  if (hasPresRelease) {
+    try {
+      sourceJudgeEvidence = await extractBimboJudgeEvidence(fileBuffer);
+    } catch (error) {
+      errors.push(
+        `DeepSeek source judge evidence extraction failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+      );
+    }
+  }
+
+  const sourceJudgeResult = await runDeepSeekSourceJudge(
+    run.companyId,
+    inserted.map((value) => {
+      const mapping = mappings.find((m) => m.id === value.mappingId)!;
+      return {
+        id: value.id,
+        sourceLabel: mapping.sourceLabel,
+        sourceSection: mapping.sourceSection,
+        extractedValue: value.extractedValue,
+        targetSheet: mapping.targetSheet,
+        targetRow: mapping.targetRow,
+        valueTransform: mapping.valueTransform,
+      };
+    }),
+    sourceJudgeEvidence,
+  );
+
+  const sourceJudgeFlaggedIds = new Set<number>();
+  if (sourceJudgeResult.status === "error") {
+    errors.push(sourceJudgeResult.message);
+  }
+  for (const failure of sourceJudgeResult.failures) {
+    errors.push(failure.message);
+    if (failure.valueId === null || sourceGuardFailedIds.has(failure.valueId)) continue;
+    sourceJudgeFlaggedIds.add(failure.valueId);
+    await db
+      .update(extractedValues)
+      .set({
+        validationStatus: failure.status,
+        validationMessage: failure.message,
+      })
+      .where(eq(extractedValues.id, failure.valueId));
+  }
+
+  // 12. Update run status
   await db
     .update(extractionRuns)
     .set({ status: "extracted", extractedAt: new Date() })
@@ -1036,9 +1149,15 @@ export async function runExtractionPipeline(runId: number): Promise<ExtractionRe
 
   return {
     extracted: inserted.length,
-    validated: validationResults.filter((r) => r.status === "pass").length,
+    validated: validationResults.filter(
+      (r) =>
+        r.status === "pass" &&
+        !sourceGuardFailedIds.has(r.id) &&
+        !sourceJudgeFlaggedIds.has(r.id),
+    ).length,
     adversarialTriggered: adversarialCheck.triggered,
     adversarialResult: adversarialCheck.result?.status,
+    sourceJudgeResult: sourceJudgeResult.status,
     errors,
   };
 }

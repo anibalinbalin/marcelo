@@ -1,0 +1,190 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  DEEPSEEK_JUDGE_FAILED,
+  DEEPSEEK_JUDGE_NEEDS_REVIEW,
+  runDeepSeekSourceJudge,
+  type SourceJudgeValue,
+} from "../source-judge";
+
+const generateTextMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@ai-sdk/openai", () => ({
+  createOpenAI: () => (modelName: string) => ({ modelName }),
+}));
+
+vi.mock("ai", () => ({
+  generateText: generateTextMock,
+  Output: {
+    object: (config: unknown) => config,
+  },
+}));
+
+function bimboValue(
+  id: number,
+  sourceLabel: string,
+  extractedValue: number,
+): SourceJudgeValue {
+  return {
+    id,
+    sourceLabel,
+    sourceSection: "press_release",
+    extractedValue: extractedValue.toFixed(6),
+    targetSheet: "FAT",
+    targetRow: 27,
+  };
+}
+
+describe("runDeepSeekSourceJudge", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.DEEPSEEK_JUDGE_MODEL;
+  });
+
+  it("blocks fail-closed without an OpenRouter API key", async () => {
+    const result = await runDeepSeekSourceJudge(
+      1,
+      [bimboValue(1, "Utilidad Bruta|México", 21952)],
+      "Utilidad Bruta México 21952",
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        valueId: 1,
+        status: DEEPSEEK_JUDGE_FAILED,
+      }),
+    ]);
+    expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks fail-closed for non-BIMBO source values too", async () => {
+    const result = await runDeepSeekSourceJudge(
+      2,
+      [{
+        id: 10,
+        sourceLabel: "Ingresos",
+        sourceSection: "[310000]",
+        extractedValue: "123.000000",
+        targetSheet: "PROJ",
+        targetRow: 3,
+        valueTransform: "divide_1000000",
+      }],
+      "SECTION [310000]\nIngresos: 123000000",
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        valueId: 10,
+        sourceLabel: "Ingresos",
+        status: DEEPSEEK_JUDGE_FAILED,
+      }),
+    ]);
+    expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it("turns a source-backed disagreement into a blocking value failure", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    process.env.DEEPSEEK_JUDGE_MODEL = "deepseek/deepseek-v4-pro";
+    generateTextMock.mockResolvedValueOnce({
+      output: {
+        overallStatus: "block",
+        summary: "Gross profit was copied from operating profit.",
+        values: [
+          {
+            id: 6,
+            sourceLabel: "Utilidad Bruta|México",
+            verdict: "block",
+            reason: "The evidence lists Utilidad Bruta México as 21952, not 6044",
+            sourceValue: "21952",
+            suggestedValue: "21952",
+          },
+        ],
+      },
+    });
+
+    const result = await runDeepSeekSourceJudge(
+      1,
+      [bimboValue(6, "Utilidad Bruta|México", 6044)],
+      "Utilidad Bruta México 21952\nUtilidad de Operación México 6044",
+    );
+
+    expect(result.status).toBe("block");
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        valueId: 6,
+        sourceLabel: "Utilidad Bruta|México",
+        status: DEEPSEEK_JUDGE_FAILED,
+        suggestedValue: "21952",
+      }),
+    ]);
+  });
+
+  it("marks insufficient evidence as a row-level review failure", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+
+    const result = await runDeepSeekSourceJudge(
+      1,
+      [bimboValue(7, "Utilidad Bruta|EAA", 4390)],
+      "",
+    );
+
+    expect(result.status).toBe("needs_review");
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        valueId: 7,
+        sourceLabel: "Utilidad Bruta|EAA",
+        status: DEEPSEEK_JUDGE_NEEDS_REVIEW,
+      }),
+    ]);
+    expect(generateTextMock).not.toHaveBeenCalled();
+  });
+
+  it("does not block on an incoherent model block that says values match", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    generateTextMock.mockResolvedValueOnce({
+      output: {
+        overallStatus: "block",
+        summary: "Incorrect block from model.",
+        values: [
+          {
+            id: 6,
+            sourceLabel: "Utilidad Bruta|México",
+            verdict: "block",
+            reason: "Extracted value 21952.000000 matches PDF table value 21,952",
+            sourceValue: "21,952",
+          },
+        ],
+      },
+    });
+
+    const result = await runDeepSeekSourceJudge(
+      1,
+      [bimboValue(6, "Utilidad Bruta|México", 21952)],
+      "Utilidad Bruta México 21952",
+    );
+
+    expect(result.status).toBe("pass");
+    expect(result.failures).toEqual([]);
+  });
+
+  it("blocks fail-closed when the judge call fails", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    generateTextMock.mockRejectedValueOnce(new Error("model unavailable"));
+
+    const result = await runDeepSeekSourceJudge(
+      1,
+      [bimboValue(6, "Utilidad Bruta|México", 21952)],
+      "Utilidad Bruta México 21952",
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        valueId: 6,
+        status: DEEPSEEK_JUDGE_FAILED,
+      }),
+    ]);
+  });
+});

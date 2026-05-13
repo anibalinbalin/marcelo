@@ -31,6 +31,15 @@ const QUARTER = "1Q26";
 const SOURCE_URL =
   "https://rnsbkyuol74lbgv8.public.blob.vercel-storage.com/reports/1/1Q26/ReporteTrimestral_BIMBO_2026_1_113031-260429-e7133f3a_1777496029208-LJmCqRKHbJbF2y1CeVrlvvkqADb7Sk.pdf";
 const BIMBO_PROJ_FORMULA_ROWS = new Set([7, 11, 15, 30, 35]);
+const REQUIRED_1Q26_FAT_VALUES = [
+  { sourceLabel: "Ventas Netas|México", cell: "AT23", expected: 39726 },
+  { sourceLabel: "Utilidad Bruta|México", cell: "AT27", expected: 21952 },
+  { sourceLabel: "Utilidad de Operación|México", cell: "AT33", expected: 6044 },
+  { sourceLabel: "UAFIDA Ajustada|México", cell: "AT38", expected: 8159 },
+  { sourceLabel: "Utilidad Bruta|Norteamérica", cell: "AT53", expected: 21997 },
+  { sourceLabel: "Utilidad Bruta|EAA", cell: "AT81", expected: 4390 },
+  { sourceLabel: "Utilidad Bruta|Latinoamérica", cell: "AT108", expected: 4945 },
+];
 
 async function cleanup(db: ReturnType<typeof drizzle>, runId: number) {
   const values = await db
@@ -123,6 +132,8 @@ async function main() {
     }
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(generated.buffer as never);
+    const fatSheet = workbook.getWorksheet("FAT");
+    if (!fatSheet) throw new Error("Generated workbook is missing FAT sheet");
 
     let ok = 0;
     let fail = 0;
@@ -162,6 +173,27 @@ async function main() {
     console.log(`${ok}/${values.length - skippedFormula} written cells correct`);
     if (skippedFormula > 0) {
       console.log(`${skippedFormula} BIMBO formula-preserved PROJ cells skipped`);
+    }
+
+    const valuesByLabel = new Map(
+      values.map((value) => [
+        value.sourceLabel,
+        Number(value.analystOverride ?? value.extractedValue ?? "0"),
+      ]),
+    );
+    for (const required of REQUIRED_1Q26_FAT_VALUES) {
+      const extracted = valuesByLabel.get(required.sourceLabel);
+      const actual = cellNumber(fatSheet.getCell(required.cell));
+      const extractedOk =
+        extracted !== undefined && Math.abs(extracted - required.expected) < 1e-6;
+      const cellOk = Number.isFinite(actual) && Math.abs(actual - required.expected) < 1e-6;
+      if (!extractedOk || !cellOk) {
+        fail++;
+        console.log(
+          `required FAT check failed: ${required.sourceLabel} ${required.cell} ` +
+            `expected=${required.expected} extracted=${extracted ?? "(missing)"} actual=${actual}`,
+        );
+      }
     }
     if (values.length === 0 || fail > 0 || (result.errors?.length ?? 0) > 0) {
       process.exitCode = 1;

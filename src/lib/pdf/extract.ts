@@ -130,52 +130,65 @@ const PRESS_RELEASE_TABLE_NAMES: Record<string, string[]> = {
 
 const PRESS_RELEASE_REGIONS = ["Norteamérica", "México", "EAA", "Latinoamérica", "Grupo Bimbo"];
 
+function getPressReleaseTableTitle(line: string): string | null {
+  for (const [canonical, aliases] of Object.entries(PRESS_RELEASE_TABLE_NAMES)) {
+    for (const alias of aliases) {
+      if (line.includes(alias)) return canonical;
+    }
+  }
+  return null;
+}
+
 function extractPressReleaseFromText(pages: string[]): PdfSection {
-  const rows: PdfTableRow[] = [];
+  const rowsByLabel = new Map<string, PdfTableRow>();
   const found = new Set<string>();
+  const lines = pages.flatMap((pageText) =>
+    pageText.split("\n").map((l) => l.trim()).filter(Boolean)
+  );
 
-  for (const pageText of pages) {
-    const lines = pageText.split("\n").map((l) => l.trim()).filter(Boolean);
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      for (const [canonical, aliases] of Object.entries(PRESS_RELEASE_TABLE_NAMES)) {
-        if (found.has(canonical)) continue;
-        if (!aliases.some((a) => line.includes(a))) continue;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const [canonical, aliases] of Object.entries(PRESS_RELEASE_TABLE_NAMES)) {
+      if (found.has(canonical)) continue;
+      if (getPressReleaseTableTitle(line) !== canonical) continue;
 
-        // Real table headers are short (just the title, maybe column labels).
-        // Skip prose sentences and data rows where the name appears with numbers.
-        const matchedAlias = aliases.find((a) => line.includes(a))!;
-        const afterAlias = line.slice(line.indexOf(matchedAlias) + matchedAlias.length).trim();
-        const beforeAlias = line.slice(0, line.indexOf(matchedAlias)).trim();
-        if (beforeAlias.length > 5) continue;
-        if (/^\d/.test(afterAlias.replace(/[,()%\s]/g, "")) && afterAlias.length > 20) continue;
+      // Real table headers are short (just the title, maybe column labels).
+      // Skip prose sentences and data rows where the name appears with numbers.
+      const matchedAlias = aliases.find((a) => line.includes(a))!;
+      const afterAlias = line.slice(line.indexOf(matchedAlias) + matchedAlias.length).trim();
+      const beforeAlias = line.slice(0, line.indexOf(matchedAlias)).trim();
+      if (beforeAlias.length > 5) continue;
+      if (/^\d/.test(afterAlias.replace(/[,()%\s]/g, "")) && afterAlias.length > 20) continue;
 
-        // Tentatively scan for regional data rows below this line.
-        // Only accept as a real table if we find at least 2 region matches.
-        const candidateRows: PdfTableRow[] = [];
-        for (let j = i + 1; j < Math.min(i + 15, lines.length); j++) {
-          const dataLine = lines[j];
-          const matchedRegion = PRESS_RELEASE_REGIONS.find(
-            (r) => dataLine.toLowerCase().startsWith(r.toLowerCase())
-          );
-          if (!matchedRegion) continue;
+      // Scan past page breaks; some tables start on one PDF page and continue
+      // on the next without repeating the title.
+      const candidateRows: PdfTableRow[] = [];
+      for (let j = i + 1; j < Math.min(i + 35, lines.length); j++) {
+        const dataLine = lines[j];
+        const nextTitle = getPressReleaseTableTitle(dataLine);
+        if (nextTitle && nextTitle !== canonical && candidateRows.length > 0) break;
 
-          const rest = dataLine.slice(matchedRegion.length).trim();
-          const tokens = rest.split(/\s+/);
-          const val = parseNumber(tokens[0] ?? "");
-          if (val !== null) {
-            candidateRows.push({ label: `${canonical}|${matchedRegion}`, values: [val] });
-          }
+        const matchedRegion = PRESS_RELEASE_REGIONS.find(
+          (r) => dataLine.toLowerCase().startsWith(r.toLowerCase())
+        );
+        if (!matchedRegion) continue;
+
+        const rest = dataLine.slice(matchedRegion.length).trim();
+        const tokens = rest.split(/\s+/);
+        const val = parseNumber(tokens[0] ?? "");
+        if (val !== null) {
+          candidateRows.push({ label: `${canonical}|${matchedRegion}`, values: [val] });
         }
+      }
 
-        if (candidateRows.length >= 2) {
-          found.add(canonical);
-          rows.push(...candidateRows);
-        }
+      if (candidateRows.length >= 2) {
+        found.add(canonical);
+        for (const row of candidateRows) rowsByLabel.set(row.label, row);
       }
     }
   }
 
+  const rows = [...rowsByLabel.values()];
   return { code: "press_release", pages: [], tables: rows.length > 0 ? [{ page: 0, headers: ["Region", "Quarter"], rows }] : [] };
 }
 

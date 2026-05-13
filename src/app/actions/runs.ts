@@ -9,6 +9,14 @@ import {
   learningEvents,
 } from "@/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
+import {
+  SOURCE_GUARD_FAILED,
+  runSourceGuards,
+} from "@/lib/validation/source-guards";
+import {
+  DEEPSEEK_JUDGE_FAILED,
+  DEEPSEEK_JUDGE_NEEDS_REVIEW,
+} from "@/lib/validation/source-judge";
 
 export async function getRuns(companyId: number) {
   const db = getDb();
@@ -87,6 +95,61 @@ export async function approveValues(
   overrides?: { id: number; value: string }[]
 ) {
   const db = getDb();
+  const [runForApproval] = await db
+    .select({ companyId: extractionRuns.companyId })
+    .from(extractionRuns)
+    .where(eq(extractionRuns.id, runId));
+  if (!runForApproval?.companyId) {
+    throw new Error(`Run ${runId} has no company ID`);
+  }
+
+  const approvalValues = await db
+    .select({
+      id: extractedValues.id,
+      extractedValue: extractedValues.extractedValue,
+      validationStatus: extractedValues.validationStatus,
+      validationMessage: extractedValues.validationMessage,
+      sourceLabel: fieldMappings.sourceLabel,
+      sourceSection: fieldMappings.sourceSection,
+    })
+    .from(extractedValues)
+    .innerJoin(fieldMappings, eq(extractedValues.mappingId, fieldMappings.id))
+    .where(eq(extractedValues.runId, runId));
+
+  const blockingStatuses = new Set([
+    "fail",
+    "error",
+    SOURCE_GUARD_FAILED,
+    DEEPSEEK_JUDGE_FAILED,
+    DEEPSEEK_JUDGE_NEEDS_REVIEW,
+  ]);
+  const blockingValue = approvalValues.find((value) =>
+    value.validationStatus ? blockingStatuses.has(value.validationStatus) : false,
+  );
+  if (blockingValue) {
+    throw new Error(
+      `Approval blocked: ${blockingValue.sourceLabel} has status ` +
+        `${blockingValue.validationStatus}. ${blockingValue.validationMessage ?? ""}`.trim(),
+    );
+  }
+
+  const sourceGuardFailures = runSourceGuards(
+    runForApproval.companyId,
+    approvalValues.map((value) => ({
+      id: value.id,
+      sourceLabel: value.sourceLabel,
+      sourceSection: value.sourceSection,
+      extractedValue: value.extractedValue,
+    })),
+  );
+  if (sourceGuardFailures.length > 0) {
+    throw new Error(
+      `Approval blocked by source guard: ${sourceGuardFailures
+        .slice(0, 3)
+        .map((failure) => failure.message)
+        .join("; ")}`,
+    );
+  }
 
   // W2.2 record-vs-promote split: every analyst override writes one
   // learning_events row (the event log) and one mapping_history row
@@ -98,11 +161,7 @@ export async function approveValues(
   if (overrides?.length) {
     const ids = overrides.map((o) => o.id);
 
-    const [runForCompany] = await db
-      .select({ companyId: extractionRuns.companyId })
-      .from(extractionRuns)
-      .where(eq(extractionRuns.id, runId));
-    const companyId = runForCompany?.companyId ?? null;
+    const companyId = runForApproval.companyId;
 
     const currentValues = await db
       .select()

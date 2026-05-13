@@ -56,6 +56,9 @@ const FLAGGED_STATUSES = new Set([
   "fail",
   "needs_review",
   "error",
+  "source_guard_failed",
+  "deepseek_judge_failed",
+  "deepseek_judge_needs_review",
 ]);
 
 function StatusCell({
@@ -96,6 +99,24 @@ function StatusCell({
         return (
           <Badge className="bg-destructive/15 text-destructive border-destructive/25">
             error
+          </Badge>
+        );
+      case "source_guard_failed":
+        return (
+          <Badge className="bg-destructive/15 text-destructive border-destructive/25">
+            source guard failed
+          </Badge>
+        );
+      case "deepseek_judge_failed":
+        return (
+          <Badge className="bg-destructive/15 text-destructive border-destructive/25">
+            DeepSeek blocked
+          </Badge>
+        );
+      case "deepseek_judge_needs_review":
+        return (
+          <Badge className="bg-destructive/15 text-destructive border-destructive/25">
+            DeepSeek review
           </Badge>
         );
       default:
