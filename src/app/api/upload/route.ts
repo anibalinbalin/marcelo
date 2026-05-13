@@ -1,5 +1,6 @@
 import { put } from "@vercel/blob";
 import { createRun, updateRunStatus } from "@/app/actions/runs";
+import { getCompany } from "@/app/actions/companies";
 import { runExtractionPipeline } from "@/lib/extraction/pipeline";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -24,6 +25,27 @@ export async function POST(request: NextRequest) {
         { error: "Invalid companyId" },
         { status: 400 }
       );
+    }
+
+    // Validate file format matches company's studied source type
+    const company = await getCompany(parsedCompanyId);
+    if (company) {
+      const fileName = file.name.toLowerCase();
+      const isPdf = fileName.endsWith(".pdf");
+      const isExcel = fileName.endsWith(".xlsx") || fileName.endsWith(".xls");
+
+      if (company.sourceType === "excel" && !isExcel) {
+        return NextResponse.json(
+          { error: `${company.name} requires XLSX files. Extraction mappings have not been analyzed for ${isPdf ? "PDF" : "this format"}.` },
+          { status: 400 }
+        );
+      }
+      if (company.sourceType === "pdf" && !isPdf) {
+        return NextResponse.json(
+          { error: `${company.name} requires PDF files. Extraction mappings have not been analyzed for ${isExcel ? "XLSX" : "this format"}.` },
+          { status: 400 }
+        );
+      }
     }
 
     // Upload to Vercel Blob

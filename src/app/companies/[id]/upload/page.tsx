@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,8 +8,29 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { FileDropzone } from "@/components/file-dropzone";
 import { QuarterSelector } from "@/components/quarter-selector";
-import { ArrowLeftIcon, Loader2Icon } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { ArrowLeftIcon, Loader2Icon, AlertTriangleIcon } from "lucide-react";
 import Link from "next/link";
+
+function fileMatchesSourceType(file: File, sourceType: string): boolean {
+  const name = file.name.toLowerCase();
+  if (sourceType === "excel") return name.endsWith(".xlsx") || name.endsWith(".xls");
+  if (sourceType === "pdf") return name.endsWith(".pdf");
+  return true;
+}
+
+function expectedFormatLabel(sourceType: string): string {
+  if (sourceType === "excel") return "XLSX";
+  if (sourceType === "pdf") return "PDF";
+  return sourceType.toUpperCase();
+}
 
 export default function UploadPage() {
   const router = useRouter();
@@ -22,6 +43,45 @@ export default function UploadPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  const [sourceType, setSourceType] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string>("");
+  const [showFormatWarning, setShowFormatWarning] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/companies/${companyId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data) {
+          setSourceType(data.sourceType);
+          setCompanyName(data.name);
+        }
+      })
+      .catch(() => {});
+  }, [companyId]);
+
+  const acceptFile = useCallback(
+    (f: File) => {
+      setFile(f);
+      setError(null);
+    },
+    []
+  );
+
+  const handleFileSelect = useCallback(
+    (f: File) => {
+      if (sourceType && !fileMatchesSourceType(f, sourceType)) {
+        setPendingFile(f);
+        setShowFormatWarning(true);
+        return;
+      }
+      acceptFile(f);
+    },
+    [sourceType, acceptFile]
+  );
+
+  const acceptedExtensions = sourceType === "excel" ? ".xlsx" : sourceType === "pdf" ? ".pdf" : ".xlsx,.pdf";
 
   const canSubmit = file !== null && quarter !== "" && !isUploading;
 
@@ -86,9 +146,13 @@ export default function UploadPage() {
         <div className="space-y-2">
           <Label>Source File</Label>
           <FileDropzone
-            onFileSelect={setFile}
-            accept=".xlsx,.pdf"
-            label="Drop quarterly report here or click to browse"
+            onFileSelect={handleFileSelect}
+            accept={acceptedExtensions}
+            label={
+              sourceType
+                ? `Drop ${expectedFormatLabel(sourceType)} quarterly report here or click to browse`
+                : "Drop quarterly report here or click to browse"
+            }
           />
         </div>
 
@@ -142,6 +206,46 @@ export default function UploadPage() {
           )}
         </Button>
       </div>
+
+      {/* Format mismatch warning dialog */}
+      <Dialog open={showFormatWarning} onOpenChange={setShowFormatWarning}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangleIcon className="size-5 text-warning" />
+              Unsupported file format
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  <strong>{companyName || "This company"}</strong> is configured
+                  to extract from <strong>{expectedFormatLabel(sourceType ?? "")}</strong> files,
+                  but you selected a <strong>{pendingFile?.name.split(".").pop()?.toUpperCase()}</strong> file.
+                </p>
+                <p>
+                  Extraction mappings have not been analyzed for this format and
+                  the run will likely fail or produce incorrect results.
+                </p>
+                <p>
+                  Please request analysis for this format before uploading, or
+                  upload a {expectedFormatLabel(sourceType ?? "")} file instead.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowFormatWarning(false);
+                setPendingFile(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
