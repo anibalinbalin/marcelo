@@ -12,12 +12,23 @@ const PLACEHOLDER_COMPANIES = [
   { id: 2, name: "Grupo SBF / Centauro", ticker: "CENT", sourceType: "excel", lastRun: null },
 ];
 
+type ApprovalInfo = {
+  quarter: string;
+  approvedBy: string | null;
+  approvedAt: Date | null;
+};
+
 export default async function DashboardPage() {
   let companiesData = PLACEHOLDER_COMPANIES;
+  let approvals = new Map<number, ApprovalInfo>();
 
   try {
     const { getCompanies } = await import("@/app/actions/companies");
-    const dbCompanies = await getCompanies();
+    const { getLatestApprovedRuns } = await import("@/app/actions/runs");
+    const [dbCompanies, approvedMap] = await Promise.all([
+      getCompanies(),
+      getLatestApprovedRuns(),
+    ]);
     if (dbCompanies.length > 0) {
       companiesData = dbCompanies.map((c) => ({
         id: c.id,
@@ -27,6 +38,7 @@ export default async function DashboardPage() {
         lastRun: null,
       }));
     }
+    approvals = approvedMap;
   } catch {
     // DB not connected yet — use placeholder
   }
@@ -67,14 +79,20 @@ export default async function DashboardPage() {
                         <p className="font-mono text-sm text-muted-foreground">{company.ticker}</p>
                       </CardHeader>
                       <CardContent>
-                        {company.lastRun ? (
+                        {approvals.has(company.id) ? (
                           <div className="flex items-center gap-2 text-sm">
-                            <span className="text-muted-foreground">Last run:</span>
-                            <span className="font-mono">{/* quarter */}</span>
                             <StatusBadge status="approved" />
+                            <span className="font-mono text-muted-foreground">
+                              {approvals.get(company.id)!.quarter}
+                            </span>
+                            {approvals.get(company.id)!.approvedBy && (
+                              <span className="text-muted-foreground">
+                                by {approvals.get(company.id)!.approvedBy}
+                              </span>
+                            )}
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground">No extraction runs yet</p>
+                          <p className="text-sm text-muted-foreground">No approved runs yet</p>
                         )}
                       </CardContent>
                     </Card>

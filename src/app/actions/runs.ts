@@ -27,6 +27,29 @@ export async function getRuns(companyId: number) {
     .orderBy(desc(extractionRuns.createdAt));
 }
 
+export async function getLatestApprovedRuns() {
+  const db = getDb();
+  const rows = await db
+    .select({
+      companyId: extractionRuns.companyId,
+      quarter: extractionRuns.quarter,
+      approvedBy: extractionRuns.approvedBy,
+      approvedAt: extractionRuns.approvedAt,
+      status: extractionRuns.status,
+    })
+    .from(extractionRuns)
+    .where(eq(extractionRuns.status, "approved"))
+    .orderBy(desc(extractionRuns.approvedAt));
+
+  const byCompany = new Map<number, (typeof rows)[0]>();
+  for (const row of rows) {
+    if (row.companyId && !byCompany.has(row.companyId)) {
+      byCompany.set(row.companyId, row);
+    }
+  }
+  return byCompany;
+}
+
 export async function getRun(runId: number) {
   const db = getDb();
   const [run] = await db
