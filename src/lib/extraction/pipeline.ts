@@ -599,37 +599,6 @@ function isBivaExcel(sheetNames: string[]): boolean {
 }
 
 /**
- * Build source-judge evidence text from a BIVA XLSX workbook.
- * Mirrors buildPdfSectionJudgeEvidence but reads from Excel sheets.
- */
-function buildBivaExcelJudgeEvidence(
-  wb: import("exceljs").Workbook,
-  sheetNames: string[]
-): string {
-  const lines: string[] = [];
-  for (const name of sheetNames) {
-    const ws = wb.getWorksheet(name);
-    if (!ws) continue;
-    lines.push(`SECTION [${name.trim().replace(/\s+.*/, "")}]`);
-    for (let r = 3; r <= ws.rowCount; r++) {
-      const label = ws.getCell(r, 1).value;
-      if (!label) continue;
-      const rawB = ws.getCell(r, 2).value;
-      const valB = rawB && typeof rawB === "object" && "result" in rawB
-        ? (rawB as { result: unknown }).result
-        : rawB;
-      const rawC = ws.getCell(r, 3).value;
-      const valC = rawC && typeof rawC === "object" && "result" in rawC
-        ? (rawC as { result: unknown }).result
-        : rawC;
-      lines.push(`${String(label).trim()}: ${valB ?? "null"} | ${valC ?? "null"}`);
-      if (lines.length >= 220) return lines.join("\n");
-    }
-  }
-  return lines.join("\n");
-}
-
-/**
  * Resolve a mapping's sourceSection (e.g., "[310000]") to an actual sheet name
  * in the BIVA workbook (e.g., "310000" or "[310000] Estado de resultados...").
  */
@@ -656,7 +625,7 @@ async function extractFromBivaExcel(
   fileBuffer: Buffer,
   mappings: typeof fieldMappings.$inferSelect[],
   runId: number,
-  companyId: number,
+  _companyId: number,
   errors: string[],
   sheetNames: string[]
 ): Promise<ExtractionResult> {
@@ -813,39 +782,8 @@ async function extractFromBivaExcel(
     validationResults
   );
 
-  // Source-grounded DeepSeek judge — same as PDF path
-  const sourceJudgeEvidence = buildBivaExcelJudgeEvidence(wb, sheetNames);
-  const sourceJudgeResult = await runDeepSeekSourceJudge(
-    companyId,
-    inserted.map((value) => {
-      const mapping = mappings.find((m) => m.id === value.mappingId)!;
-      return {
-        id: value.id,
-        sourceLabel: mapping.sourceLabel,
-        sourceSection: mapping.sourceSection,
-        extractedValue: value.extractedValue,
-        targetSheet: mapping.targetSheet,
-        targetRow: mapping.targetRow,
-        valueTransform: mapping.valueTransform,
-      };
-    }),
-    sourceJudgeEvidence,
-  );
-
-  const sourceJudgeFlaggedIds = new Set<number>();
-  if (sourceJudgeResult.status === "error") {
-    errors.push(sourceJudgeResult.message);
-  }
-  for (const failure of sourceJudgeResult.failures) {
-    errors.push(failure.message);
-    if (failure.valueId === null) continue;
-    sourceJudgeFlaggedIds.add(failure.valueId);
-    await db
-      .update(extractedValues)
-      .set({ validationStatus: failure.status, validationMessage: failure.message })
-      .where(eq(extractedValues.id, failure.valueId));
-  }
-
+  // Skip DeepSeek judge for BIVA XLSX — extraction is a deterministic cell read,
+  // and the evidence serializer is a strictly worse channel than the extractor itself.
   await db
     .update(extractionRuns)
     .set({ status: "extracted", extractedAt: new Date() })
@@ -853,12 +791,10 @@ async function extractFromBivaExcel(
 
   return {
     extracted: inserted.length,
-    validated: validationResults.filter(
-      (r) => r.status === "pass" && !sourceJudgeFlaggedIds.has(r.id),
-    ).length,
+    validated: validationResults.filter((r) => r.status === "pass").length,
     adversarialTriggered: adversarialCheck.triggered,
     adversarialResult: adversarialCheck.result?.status,
-    sourceJudgeResult: sourceJudgeResult.status,
+    sourceJudgeResult: "skipped" as const,
     errors,
   };
 }
