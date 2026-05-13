@@ -61,8 +61,8 @@ export default async function DashboardPage() {
                       <CardHeader className="pb-3">
                         <div className="flex items-center justify-between">
                           <CardTitle className="text-lg">{company.name}</CardTitle>
-                          <Badge variant="outline" className="uppercase text-xs">
-                            {company.sourceType}
+                          <Badge variant="outline" className="text-xs">
+                            source: {company.sourceType === "excel" ? "XLSX" : company.sourceType.toUpperCase()}
                           </Badge>
                         </div>
                         <p className="font-mono text-sm text-muted-foreground">{company.ticker}</p>

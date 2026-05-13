@@ -51,7 +51,7 @@ export default async function CompanyDetailPage({
             <h1 className="text-2xl font-semibold tracking-tight text-balance">{company.name}</h1>
             <div className="flex items-center gap-2 mt-1">
               <span className="font-mono text-sm text-muted-foreground">{company.ticker}</span>
-              <Badge variant="outline" className="uppercase text-xs">{company.sourceType}</Badge>
+              <Badge variant="outline" className="text-xs">source: {company.sourceType === "excel" ? "XLSX" : company.sourceType.toUpperCase()}</Badge>
             </div>
           </div>
           <div className="flex gap-2">
