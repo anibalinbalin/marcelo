@@ -11,7 +11,9 @@
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
     "verify:company": "npx tsx scripts/verify-company-pack.ts",
     "verify:companies": "npx tsx scripts/verify-company-pack.ts",
-    "certify:company": "npx tsx scripts/verify-company-pack.ts --full"
+    "certify:company": "npx tsx scripts/verify-company-pack.ts --full",
+    "fake-camila": "npx tsx scripts/fake-camila.ts",
+    "fake-camila:all": "npx tsx scripts/fake-camila-all.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.51",

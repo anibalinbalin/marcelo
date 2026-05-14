@@ -1,0 +1,22 @@
+{
+  "id": "ntco3-4q25",
+  "companyId": 8,
+  "ticker": "NTCO3",
+  "companyName": "Natura &Co",
+  "quarter": "4Q25",
+  "status": "certification-active",
+  "sourceFile": "public/camila/Natura_Planilha_Resultados_download.xlsx",
+  "sourceSha256": "549e14d3ba16b445dfc8ab13a1482214a2d4332f2d1df8481b2ebfc69b2246ee",
+  "expectationsModule": "expectations/ntco3-4q25.ts",
+  "minimumAssertions": {
+    "preApprovalCells": 6,
+    "postRecalcCells": 0,
+    "duplicatePairs": 0,
+    "minExtractedValues": 12
+  },
+  "humanGate": "Camila only reviews after this pack passes preflight plus full fake-camila certification.",
+  "knownRisksCovered": [
+    "wrong source workbook",
+    "stale active mappings"
+  ]
+}

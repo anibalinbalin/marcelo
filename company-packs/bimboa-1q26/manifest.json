@@ -1,0 +1,24 @@
+{
+  "id": "bimboa-1q26",
+  "companyId": 1,
+  "ticker": "BIMBOA",
+  "companyName": "Grupo Bimbo",
+  "quarter": "1Q26",
+  "status": "certification-active",
+  "sourceFile": "public/camila/ReporteTrimestral_BIMBO_1Q26.pdf",
+  "sourceSha256": "86b7d854a98588543cfcbeb84eb544fbbb2240420033a08e3367a49ed833d675",
+  "expectationsModule": "expectations/bimboa-1q26.ts",
+  "minimumAssertions": {
+    "preApprovalCells": 42,
+    "postRecalcCells": 16,
+    "duplicatePairs": 0,
+    "minExtractedValues": 35
+  },
+  "humanGate": "Camila only reviews after this pack passes preflight plus full fake-camila certification.",
+  "knownRisksCovered": [
+    "wrong source workbook",
+    "stale active mappings",
+    "FAT recalc staleness",
+    "press-release parser regression"
+  ]
+}

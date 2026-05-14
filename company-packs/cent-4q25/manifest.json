@@ -1,0 +1,22 @@
+{
+  "id": "cent-4q25",
+  "companyId": 2,
+  "ticker": "CENT",
+  "companyName": "Grupo SBF / Centauro",
+  "quarter": "4Q25",
+  "status": "certification-active",
+  "sourceFile": "public/camila/Planilha_Interativa_4T25_CENT.xlsx",
+  "sourceSha256": "b427c9747c9055096f79a156d61bfb7a16f3c0a653c23be6e7a5e805a6a40f23",
+  "expectationsModule": "expectations/cent-4q25.ts",
+  "minimumAssertions": {
+    "preApprovalCells": 11,
+    "postRecalcCells": 0,
+    "duplicatePairs": 0,
+    "minExtractedValues": 30
+  },
+  "humanGate": "Camila only reviews after this pack passes preflight plus full fake-camila certification.",
+  "knownRisksCovered": [
+    "wrong source workbook",
+    "stale active mappings"
+  ]
+}

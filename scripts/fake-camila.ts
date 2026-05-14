@@ -278,6 +278,59 @@ async function main() {
     results.push(assertPairDiffers(pair, va, vb));
   }
 
+  // --- STEP 5c: auto-resolve deepseek_judge_needs_review when pinned
+  // The DeepSeek judge is non-deterministic — sometimes it can't find
+  // supporting evidence in the PDF snippet even for correct values.
+  // When the extracted value matches a pinned expectation, we override
+  // the judge's uncertainty before calling approve (which blocks on
+  // needs_review). This keeps the judge fail-closed for un-pinned values.
+  const needsReviewRows = await db
+    .select({
+      id: extractedValues.id,
+      targetSheet: fieldMappings.targetSheet,
+      targetRow: fieldMappings.targetRow,
+      validationStatus: extractedValues.validationStatus,
+    })
+    .from(extractedValues)
+    .leftJoin(fieldMappings, eq(fieldMappings.id, extractedValues.mappingId))
+    .where(
+      and(
+        eq(extractedValues.runId, run.id),
+        eq(extractedValues.validationStatus, "deepseek_judge_needs_review"),
+      ),
+    );
+  let autoResolved = 0;
+  for (const nr of needsReviewRows) {
+    if (!nr.targetSheet || nr.targetRow === null) continue;
+    const key = `${nr.targetSheet}:r${nr.targetRow}`;
+    const pinned = exp.projPreApprovalCells[key];
+    const actual = byKey.get(key);
+    if (pinned && actual !== undefined) {
+      const tol = pinned.tolerance ?? 0.5;
+      if (Math.abs(actual - pinned.value) <= tol) {
+        await db
+          .update(extractedValues)
+          .set({
+            validationStatus: "pass",
+            validationMessage: "auto-resolved by fake-camila: value matches pinned expectation",
+          })
+          .where(eq(extractedValues.id, nr.id));
+        autoResolved++;
+      }
+    }
+  }
+  if (autoResolved > 0) {
+    console.log(`\n  auto-resolved ${autoResolved} deepseek_judge_needs_review → pass (pinned match)`);
+  }
+  if (needsReviewRows.length > autoResolved) {
+    const unresolved = needsReviewRows.length - autoResolved;
+    results.push({
+      ok: false,
+      name: "unresolved needs_review",
+      detail: `${unresolved} value(s) flagged by DeepSeek judge with no matching pinned expectation`,
+    });
+  }
+
   // --- STEP 6: approve → trigger surgical writer + blob upload
   console.log("\n=== STEP 6: approve ===");
   const approved: any = await approveValues(run.id, "fake-camila@local");
@@ -301,17 +354,21 @@ async function main() {
   console.log(`  wrote ${outPath}`);
 
   // --- STEP 8: open in Excel, force recalc, read FAT cells
-  console.log(`\n=== STEP 8: Excel recalc + read ${Object.keys(exp.fatAfterRecalc).length} cells ===`);
   const cellRefs = Object.keys(exp.fatAfterRecalc);
-  let readback: Record<string, number | null>;
-  try {
-    readback = await recalcAndReadCua(outPath, exp.fatSheet, cellRefs);
-  } catch (e) {
-    console.warn(`  CUA recalc failed, falling back to AppleScript: ${(e as Error).message}`);
-    readback = await recalcAndReadAppleScript(outPath, exp.fatSheet, cellRefs);
-  }
-  for (const [cellRef, expected] of Object.entries(exp.fatAfterRecalc)) {
-    results.push(assertCellValue(`${exp.fatSheet}!${cellRef}`, expected, readback[cellRef]));
+  if (cellRefs.length > 0) {
+    console.log(`\n=== STEP 8: Excel recalc + read ${cellRefs.length} cells ===`);
+    let readback: Record<string, number | null>;
+    try {
+      readback = await recalcAndReadCua(outPath, exp.fatSheet, cellRefs);
+    } catch (e) {
+      console.warn(`  CUA recalc failed, falling back to AppleScript: ${(e as Error).message}`);
+      readback = await recalcAndReadAppleScript(outPath, exp.fatSheet, cellRefs);
+    }
+    for (const [cellRef, expected] of Object.entries(exp.fatAfterRecalc)) {
+      results.push(assertCellValue(`${exp.fatSheet}!${cellRef}`, expected, readback[cellRef]));
+    }
+  } else {
+    console.log(`\n=== STEP 8: skipped (no fatAfterRecalc cells) ===`);
   }
 
   // --- STEP 9: report

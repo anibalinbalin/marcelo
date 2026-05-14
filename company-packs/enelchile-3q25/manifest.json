@@ -1,0 +1,23 @@
+{
+  "id": "enelchile-3q25",
+  "companyId": 3,
+  "ticker": "ENELCHILE",
+  "companyName": "Enel Chile",
+  "quarter": "3Q25",
+  "status": "certification-active",
+  "sourceFile": "public/camila/Estados_Financieros_Enel_Chile_3Q25.pdf",
+  "sourceSha256": "acbc737311240f740a2d863528710421414204a3b884fa3223e6c2a2ea9b39da",
+  "expectationsModule": "expectations/enelchile-3q25.ts",
+  "minimumAssertions": {
+    "preApprovalCells": 22,
+    "postRecalcCells": 0,
+    "duplicatePairs": 0,
+    "minExtractedValues": 18
+  },
+  "humanGate": "Camila only reviews after this pack passes preflight plus full fake-camila certification.",
+  "knownRisksCovered": [
+    "wrong source workbook",
+    "stale active mappings",
+    "IFRS tokenizer regression"
+  ]
+}

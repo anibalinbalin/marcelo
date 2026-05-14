@@ -7,7 +7,7 @@ export const DEEPSEEK_JUDGE_NEEDS_REVIEW = "deepseek_judge_needs_review";
 
 const DEFAULT_DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro";
 const JUDGE_PROMPT_VERSION = "source-judge-v2";
-const MAX_SNIPPET_LINES = 140;
+const MAX_SNIPPET_LINES = 300;
 const REGION_ROW_RE = /^(Norteam[eé]rica|M[eé]xico|EAA|Latinoam[eé]rica|Grupo Bimbo)\s+[-(]?\d/i;
 const TABLE_MARKERS = [
   "Ventas Netas",
@@ -17,6 +17,7 @@ const TABLE_MARKERS = [
   "UAFIDA Ajustada",
   "UAFIDA Aj",
 ];
+const BIVA_SECTION_RE = /^\[([23][12]0000|520000|700000)\]/;
 
 const JudgeOutputSchema = z.object({
   overallStatus: z.enum(["pass", "block", "needs_review"]),
@@ -86,12 +87,27 @@ function normalizeLine(line: string): string {
 }
 
 function findBimboSnippetByPage(pages: string[]): string {
-  const primaryBlocks: string[] = [];
+  const pressReleaseBlocks: string[] = [];
+  const bivaBlocks: string[] = [];
   const fallbackBlocks: string[] = [];
 
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-    if (pageIndex > 9) break;
     const lines = pages[pageIndex].split("\n").map(normalizeLine).filter(Boolean);
+
+    // BIVA sections ([210000], [310000], [520000], [700000]) — full page
+    // Skip TOC pages that mention section codes as references
+    if (pageIndex > 0 && lines.some((line) => BIVA_SECTION_RE.test(line))) {
+      const dataLines = lines.filter(
+        (l) => !/^(BIMBO Consolidado|Clave de Cotizaci|Página \d|Torre Esmeralda|Col\. Lomas|Bolsa Institucional)/.test(l),
+      );
+      if (dataLines.length > 0) {
+        bivaBlocks.push(`PDF page ${pageIndex + 1}\n${dataLines.join("\n")}`);
+      }
+      continue;
+    }
+
+    // Press-release region tables (first ~10 pages)
+    if (pageIndex > 14) continue;
     const regionRows = lines
       .map((line, index) => ({ line, index }))
       .filter(({ line }) => REGION_ROW_RE.test(line));
@@ -110,13 +126,13 @@ function findBimboSnippetByPage(pages: string[]): string {
 
     if (selected.size > 0) {
       const block = `PDF page ${pageIndex + 1}\n${[...selected.values()].join("\n")}`;
-      if (regionRows.length >= 3) primaryBlocks.push(block);
+      if (regionRows.length >= 3) pressReleaseBlocks.push(block);
       else fallbackBlocks.push(block);
     }
   }
 
-  const blocks = primaryBlocks.length > 0 ? primaryBlocks : fallbackBlocks;
-  return blocks.join("\n\n").split("\n").slice(0, MAX_SNIPPET_LINES).join("\n");
+  const allBlocks = [...bivaBlocks, ...pressReleaseBlocks, ...fallbackBlocks];
+  return allBlocks.join("\n\n").split("\n").slice(0, MAX_SNIPPET_LINES).join("\n");
 }
 
 export async function extractBimboJudgeEvidence(
