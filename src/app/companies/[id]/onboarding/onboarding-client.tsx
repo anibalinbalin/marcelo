@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeftIcon, BrainIcon, CheckIcon, Loader2Icon } from "lucide-react";
+import { ArrowLeftIcon, BrainIcon, CheckIcon } from "lucide-react";
+import { ThinkingDots } from "@/components/ui/thinking-dots";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -136,8 +137,8 @@ export function OnboardingClient({ company }: Props) {
             </div>
           </div>
           <Button onClick={suggest} disabled={!baseModelFile || !sourceFile || isSuggesting}>
-            {isSuggesting ? <Loader2Icon className="size-4 animate-spin" /> : <BrainIcon className="size-4" />}
-            Analyze
+            {isSuggesting ? <ThinkingDots count={3} /> : <BrainIcon className="size-4" />}
+            {isSuggesting ? "Analyzing..." : "Analyze"}
           </Button>
         </div>
 
@@ -186,8 +187,8 @@ export function OnboardingClient({ company }: Props) {
                 Suggested Mappings
               </CardTitle>
               <Button onClick={confirm} disabled={isConfirming || selected.size === 0}>
-                {isConfirming ? <Loader2Icon className="size-4 animate-spin" /> : <CheckIcon className="size-4" />}
-                Confirm Selected
+                {isConfirming ? <ThinkingDots count={3} /> : <CheckIcon className="size-4" />}
+                {isConfirming ? "Saving..." : "Confirm Selected"}
               </Button>
             </CardHeader>
             <CardContent>

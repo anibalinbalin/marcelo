@@ -139,4 +139,9 @@
   html {
     @apply font-sans;
   }
+
+  @keyframes twinkle {
+    0%, 100% { opacity: 0; }
+    35%, 55% { opacity: 1; }
+  }
 }

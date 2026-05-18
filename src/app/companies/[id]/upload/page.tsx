@@ -16,6 +16,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { ThinkingDots } from "@/components/ui/thinking-dots";
 import { ArrowLeftIcon, Loader2Icon, AlertTriangleIcon } from "lucide-react";
 import Link from "next/link";
 
@@ -176,11 +177,16 @@ export default function UploadPage() {
 
         {/* Upload progress */}
         {isUploading && (
-          <div className="space-y-2">
-            <Progress value={uploadProgress} className="h-2" />
-            <p className="text-xs text-muted-foreground">
-              Uploading and creating extraction run...
-            </p>
+          <div className="space-y-3">
+            <Progress value={uploadProgress} className="h-1.5" />
+            <div className="flex items-center gap-3">
+              {uploadProgress >= 30 && <ThinkingDots count={5} />}
+              <p className="text-xs text-muted-foreground">
+                {uploadProgress < 30
+                  ? "Uploading file..."
+                  : "Extracting financial data..."}
+              </p>
+            </div>
           </div>
         )}
 

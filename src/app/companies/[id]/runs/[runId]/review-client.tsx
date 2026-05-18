@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import {
   type ExtractedValueWithMapping,
 } from "@/components/review-table";
 import { ApprovalBar } from "@/components/approval-bar";
+import { ThinkingDots } from "@/components/ui/thinking-dots";
 import { approveValues } from "@/app/actions/runs";
 import {
   ArrowLeftIcon,
@@ -80,6 +81,22 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
   const [cellsWritten, setCellsWritten] = useState<number | null>(null);
   const [localStatus, setLocalStatus] = useState(run.status);
   const [localApprovedBy, setLocalApprovedBy] = useState(run.approvedBy);
+
+  useEffect(() => {
+    if (localStatus !== "pending") return;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/runs/${run.id}/status`);
+        if (!res.ok) return;
+        const { status } = await res.json();
+        if (status && status !== "pending") {
+          setLocalStatus(status);
+          router.refresh();
+        }
+      } catch {}
+    }, 3000);
+    return () => clearInterval(id);
+  }, [localStatus, run.id, router]);
 
   // Group values by target sheet
   const sheets = useMemo(() => {
@@ -238,17 +255,18 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
       <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-6">
         {/* Pending state */}
         {localStatus === "pending" && (
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Extraction in progress...
-            </p>
+          <div className="space-y-6">
+            <div className="flex flex-col items-center gap-4 py-8">
+              <ThinkingDots count={6} />
+              <p className="text-sm text-muted-foreground">
+                Analyzing quarterly report...
+              </p>
+            </div>
             <div className="space-y-3">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-8 w-3/4" />
               <Skeleton className="h-8 w-1/2" />
               <Skeleton className="h-8 w-2/3" />
-              <Skeleton className="h-8 w-3/5" />
-              <Skeleton className="h-8 w-4/5" />
             </div>
           </div>
         )}
@@ -269,6 +287,22 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
               )}
             </AlertDescription>
           </Alert>
+        )}
+
+        {/* Approving in progress */}
+        {isApproving && (
+          <div className="mb-6 flex items-center gap-3 rounded-lg border border-info/25 bg-info/5 px-4 py-3">
+            <ThinkingDots count={4} />
+            <p className="text-sm text-muted-foreground">Validating & approving...</p>
+          </div>
+        )}
+
+        {/* Downloading in progress */}
+        {isDownloading && (
+          <div className="mb-6 flex items-center gap-3 rounded-lg border border-info/25 bg-info/5 px-4 py-3">
+            <ThinkingDots count={5} />
+            <p className="text-sm text-muted-foreground">Populating cells into template...</p>
+          </div>
         )}
 
         {/* Approved state banner */}
