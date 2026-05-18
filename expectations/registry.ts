@@ -25,6 +25,7 @@ export interface CompanyPackManifest {
   companyName: string;
   quarter: string;
   status: string;
+  sourceKind: string;
   sourceFile: string;
   sourceSha256: string;
   expectationsModule: string;

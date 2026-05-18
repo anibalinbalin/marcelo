@@ -5,6 +5,7 @@
   "companyName": "Natura &Co",
   "quarter": "4Q25",
   "status": "certification-active",
+  "sourceKind": "excel",
   "sourceFile": "public/camila/Natura_Planilha_Resultados_download.xlsx",
   "sourceSha256": "549e14d3ba16b445dfc8ab13a1482214a2d4332f2d1df8481b2ebfc69b2246ee",
   "expectationsModule": "expectations/ntco3-4q25.ts",

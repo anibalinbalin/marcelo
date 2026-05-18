@@ -25,6 +25,7 @@ export const expectations: Expectations = {
   companyId: 7,
   ticker: "LREN3",
   quarter: "4Q25",
+  sourceKind: "excel",
   sourceFile:
     "/Users/anibalin/Sites/2026/marcelo/public/camila/Renner Planilhas e Fundamentos  (6).xlsx",
   minExtractedValues: 60,

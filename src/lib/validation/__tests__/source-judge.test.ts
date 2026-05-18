@@ -169,6 +169,79 @@ describe("runDeepSeekSourceJudge", () => {
     expect(result.failures).toEqual([]);
   });
 
+  it("does not block when the transformed source value matches the extraction", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    generateTextMock.mockResolvedValueOnce({
+      output: {
+        overallStatus: "block",
+        summary: "Incorrect sign objection from model.",
+        values: [
+          {
+            id: 31,
+            sourceLabel: "Impuestos a la utilidad",
+            verdict: "block",
+            reason: "Source value transforms to the extracted value, but the sign looks surprising.",
+            sourceValue: "1,643,848,000",
+            suggestedValue: "1643.848000",
+          },
+        ],
+      },
+    });
+
+    const result = await runDeepSeekSourceJudge(
+      1,
+      [{
+        id: 31,
+        sourceLabel: "Impuestos a la utilidad",
+        sourceSection: "[310000]",
+        extractedValue: "-1643.848000",
+        targetSheet: "PROJ",
+        targetRow: 31,
+        valueTransform: "negate_divide_1000000",
+      }],
+      "Impuestos a la utilidad 1,643,848,000",
+    );
+
+    expect(result.status).toBe("pass");
+    expect(result.failures).toEqual([]);
+  });
+
+  it("does not block when the reason text contains a transformable source value", async () => {
+    process.env.OPENROUTER_API_KEY = "test-key";
+    generateTextMock.mockResolvedValueOnce({
+      output: {
+        overallStatus: "block",
+        summary: "Incorrect sign objection from model.",
+        values: [
+          {
+            id: 9,
+            sourceLabel: "Estimación preventiva para riesgos crediticios",
+            verdict: "block",
+            reason: "The extracted value is -471.000000, but the source lists the value as 471.",
+            suggestedValue: "471.000000",
+          },
+        ],
+      },
+    });
+
+    const result = await runDeepSeekSourceJudge(
+      6,
+      [{
+        id: 9,
+        sourceLabel: "Estimación preventiva para riesgos crediticios",
+        sourceSection: "vision:36",
+        extractedValue: "-471.000000",
+        targetSheet: "PROJ",
+        targetRow: 9,
+        valueTransform: "negate",
+      }],
+      "Estimación preventiva para riesgos crediticios 471",
+    );
+
+    expect(result.status).toBe("pass");
+    expect(result.failures).toEqual([]);
+  });
+
   it("blocks fail-closed when the judge call fails", async () => {
     process.env.OPENROUTER_API_KEY = "test-key";
     generateTextMock.mockRejectedValueOnce(new Error("model unavailable"));

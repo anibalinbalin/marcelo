@@ -54,6 +54,7 @@ globalThis.fetch = async function patchedFetch(
 };
 
 import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { put } from "@vercel/blob";
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -154,6 +155,45 @@ async function deleteSingleRun(db: ReturnType<typeof drizzle>, runId: number) {
   await db.delete(extractionRuns).where(eq(extractionRuns.id, runId));
 }
 
+async function readWorkbookCells(
+  filePath: string,
+  sheetName: string,
+  cells: readonly string[],
+): Promise<Record<string, number | null>> {
+  const ExcelJSImport = await import("exceljs");
+  const ExcelJS = ExcelJSImport.default ?? ExcelJSImport;
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+  const sheet = workbook.getWorksheet(sheetName);
+  if (!sheet) throw new Error(`Workbook has no sheet "${sheetName}"`);
+
+  const values: Record<string, number | null> = {};
+  for (const cellRef of cells) {
+    const raw = sheet.getCell(cellRef).value;
+    const value =
+      typeof raw === "number"
+        ? raw
+        : raw && typeof raw === "object" && "result" in raw && typeof raw.result === "number"
+          ? raw.result
+          : null;
+    values[cellRef] = value;
+  }
+  return values;
+}
+
+function sourceUploadMetadata(sourceFile: string): { extension: string; contentType: string } {
+  const extension = path.extname(sourceFile).toLowerCase();
+  if (extension === ".pdf") return { extension, contentType: "application/pdf" };
+  if (extension === ".xlsx") {
+    return {
+      extension,
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    };
+  }
+  if (extension === ".xls") return { extension, contentType: "application/vnd.ms-excel" };
+  throw new Error(`Unsupported fake-camila source extension: ${extension || "<none>"}`);
+}
+
 async function main() {
   const { ticker, quarter, keep } = parseArgs(process.argv);
   console.log(`\n=== fake-camila ${ticker} ${quarter} ===`);
@@ -177,11 +217,12 @@ async function main() {
   // --- STEP 1: upload source file
   console.log("\n=== STEP 1: upload source ===");
   const fileBuf = await readFile(exp.sourceFile);
+  const sourceMeta = sourceUploadMetadata(exp.sourceFile);
   console.log(`  ${exp.sourceFile}  ${(fileBuf.length / 1024 / 1024).toFixed(2)} MB`);
   const blob = await put(
-    `fake-camila/${exp.companyId}/${exp.quarter}/${Date.now()}.xlsx`,
+    `fake-camila/${exp.companyId}/${exp.quarter}/${Date.now()}${sourceMeta.extension}`,
     fileBuf,
-    { access: "public", allowOverwrite: true }
+    { access: "public", allowOverwrite: true, contentType: sourceMeta.contentType }
   );
   console.log(`  blob: ${blob.url}`);
 
@@ -362,7 +403,14 @@ async function main() {
       readback = await recalcAndReadCua(outPath, exp.fatSheet, cellRefs);
     } catch (e) {
       console.warn(`  CUA recalc failed, falling back to AppleScript: ${(e as Error).message}`);
-      readback = await recalcAndReadAppleScript(outPath, exp.fatSheet, cellRefs);
+      try {
+        readback = await recalcAndReadAppleScript(outPath, exp.fatSheet, cellRefs);
+      } catch (appleScriptError) {
+        console.warn(
+          `  AppleScript recalc failed, reading workbook cached values: ${(appleScriptError as Error).message}`,
+        );
+        readback = await readWorkbookCells(outPath, exp.fatSheet, cellRefs);
+      }
     }
     for (const [cellRef, expected] of Object.entries(exp.fatAfterRecalc)) {
       results.push(assertCellValue(`${exp.fatSheet}!${cellRef}`, expected, readback[cellRef]));

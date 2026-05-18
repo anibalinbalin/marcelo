@@ -5,6 +5,7 @@
   "companyName": "Kimberly-Clark de México",
   "quarter": "4Q25",
   "status": "certification-active",
+  "sourceKind": "pdf",
   "sourceFile": "public/camila/ReporteTrimestral_KIMBER_2025_4D_111323-260211-dc210583_1770875016982 (2).pdf",
   "sourceSha256": "7cc2161e77e9c41454aa5a8ee9070631c830501642e387536a2c92b71e6ab5da",
   "expectationsModule": "expectations/kimber-4q25.ts",
@@ -12,7 +13,7 @@
     "preApprovalCells": 21,
     "postRecalcCells": 0,
     "duplicatePairs": 0,
-    "minExtractedValues": 18
+    "minExtractedValues": 21
   },
   "humanGate": "Camila only reviews after this pack passes preflight plus full fake-camila certification.",
   "knownRisksCovered": [

@@ -4,9 +4,23 @@ export const expectations: Expectations = {
   companyId: 1,
   ticker: "BIMBOA",
   quarter: "1Q26",
+  sourceKind: "pdf",
   sourceFile:
     "/Users/anibalin/Sites/2026/marcelo/public/camila/ReporteTrimestral_BIMBO_1Q26.pdf",
-  minExtractedValues: 35,
+  minExtractedValues: 42,
+  sourceEvidence: {
+    kind: "bimbo_press_release",
+    sectionCodes: ["[210000]", "[310000]", "press_release"],
+    requiredLabels: [
+      "Ingresos",
+      "Utilidad bruta",
+      "Total de activos",
+      "Ventas Netas|México",
+      "Utilidad Bruta|Norteamérica",
+      "Utilidad de Operación|EAA",
+      "UAFIDA Ajustada|Latinoamérica",
+    ],
+  },
 
   projPreApprovalCells: {
     "PROJ:r5":  { value: 100318.746, label: "Ingresos" },

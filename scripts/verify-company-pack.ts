@@ -29,6 +29,13 @@ function countKeys(value: Record<string, unknown> | undefined): number {
   return value ? Object.keys(value).length : 0;
 }
 
+function sourceKindFromPath(filePath: string): "excel" | "pdf" | "unknown" {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".pdf") return "pdf";
+  if (ext === ".xlsx" || ext === ".xls") return "excel";
+  return "unknown";
+}
+
 function checkPack(pack: RegisteredCompanyPack, repoRoot: string): Check[] {
   const { manifest, expectations } = pack;
   const sourcePath = path.resolve(repoRoot, manifest.sourceFile);
@@ -48,6 +55,16 @@ function checkPack(pack: RegisteredCompanyPack, repoRoot: string): Check[] {
     ok: path.resolve(repoRoot, expectations.sourceFile) === sourcePath,
     name: `${manifest.id}: source path`,
     detail: manifest.sourceFile,
+  });
+  checks.push({
+    ok: manifest.sourceKind === expectations.sourceKind,
+    name: `${manifest.id}: source kind`,
+    detail: `${manifest.sourceKind} manifest / ${expectations.sourceKind} expectations`,
+  });
+  checks.push({
+    ok: sourceKindFromPath(manifest.sourceFile) === manifest.sourceKind,
+    name: `${manifest.id}: source extension`,
+    detail: `${manifest.sourceFile} -> ${sourceKindFromPath(manifest.sourceFile)}`,
   });
   checks.push({
     ok: existsSync(sourcePath),
@@ -89,6 +106,11 @@ function checkPack(pack: RegisteredCompanyPack, repoRoot: string): Check[] {
     name: `${manifest.id}: min extracted values`,
     detail: `${expectations.minExtractedValues} / minimum ${manifest.minimumAssertions.minExtractedValues}`,
   });
+  checks.push({
+    ok: expectations.minExtractedValues >= preApprovalCount,
+    name: `${manifest.id}: min covers pinned cells`,
+    detail: `${expectations.minExtractedValues} min / ${preApprovalCount} pinned pre-approval cells`,
+  });
 
   const duplicatePairCells = expectations.projDuplicatePairs.flatMap((pair) => [
     `${pair.sheet}:${pair.a}`,
@@ -101,6 +123,49 @@ function checkPack(pack: RegisteredCompanyPack, repoRoot: string): Check[] {
     name: `${manifest.id}: duplicate pairs pinned`,
     detail: unpinned.length === 0 ? "all duplicate-pair cells have exact expected values" : unpinned.join(", "),
   });
+
+  const evidence = expectations.sourceEvidence;
+  const expectedLabels = new Set(
+    Object.values(expectations.projPreApprovalCells).map((cell) => cell.label),
+  );
+  if (expectations.sourceKind === "pdf") {
+    const missingRequiredLabels = (evidence?.requiredLabels ?? []).filter(
+      (label) => !expectedLabels.has(label),
+    );
+    checks.push({
+      ok: Boolean(evidence),
+      name: `${manifest.id}: PDF source evidence contract`,
+      detail: evidence ? evidence.kind : "missing",
+    });
+    checks.push({
+      ok: (evidence?.requiredLabels.length ?? 0) > 0,
+      name: `${manifest.id}: PDF evidence labels`,
+      detail: `${evidence?.requiredLabels.length ?? 0} required labels`,
+    });
+    checks.push({
+      ok: missingRequiredLabels.length === 0,
+      name: `${manifest.id}: PDF evidence labels pinned`,
+      detail: missingRequiredLabels.length === 0 ? "all required evidence labels are pinned" : missingRequiredLabels.join(", "),
+    });
+    checks.push({
+      ok:
+        evidence?.kind === "ifrs_text" ||
+        (evidence?.kind === "vision_pdf" && (evidence.visionSections?.length ?? 0) > 0) ||
+        ((evidence?.kind === "pdf_sections" || evidence?.kind === "bimbo_press_release") &&
+          (evidence.sectionCodes?.length ?? 0) > 0),
+      name: `${manifest.id}: PDF evidence source scope`,
+      detail:
+        evidence?.kind === "vision_pdf"
+          ? (evidence.visionSections ?? []).join(", ")
+          : (evidence?.sectionCodes ?? [evidence?.kind ?? "missing"]).join(", "),
+    });
+  } else {
+    checks.push({
+      ok: !evidence,
+      name: `${manifest.id}: XLSX source evidence contract`,
+      detail: evidence ? "unexpected PDF evidence contract" : "not required",
+    });
+  }
 
   return checks;
 }

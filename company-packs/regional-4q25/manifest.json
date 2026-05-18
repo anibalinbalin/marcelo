@@ -5,6 +5,7 @@
   "companyName": "Banregio Grupo Financiero",
   "quarter": "4Q25",
   "status": "certification-active",
+  "sourceKind": "pdf",
   "sourceFile": "public/camila/RA Banregio 4T25.pdf",
   "sourceSha256": "e1d6f458e9135b22a41e8e4c70b177715de34c7f1194ccf4ed151bee62899e87",
   "expectationsModule": "expectations/regional-4q25.ts",
@@ -12,7 +13,7 @@
     "preApprovalCells": 15,
     "postRecalcCells": 0,
     "duplicatePairs": 0,
-    "minExtractedValues": 12
+    "minExtractedValues": 15
   },
   "humanGate": "Camila only reviews after this pack passes preflight plus full fake-camila certification.",
   "knownRisksCovered": [

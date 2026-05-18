@@ -207,15 +207,49 @@ function parseJudgeNumber(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseJudgeNumbers(value: string | undefined): number[] {
+  if (!value) return [];
+  return [...value.matchAll(/-?[\d,]+(?:\.\d+)?/g)]
+    .map((match) => Number(match[0].replace(/,/g, "")))
+    .filter((parsed) => Number.isFinite(parsed));
+}
+
+function applyJudgeTransform(value: number, transform: string | null | undefined): number {
+  switch (transform) {
+    case "divide_1000000":
+      return value / 1_000_000;
+    case "negate_divide_1000000":
+      return -Math.abs(value) / 1_000_000;
+    case "divide_1000":
+      return value / 1_000;
+    case "negate_divide_1000":
+      return -Math.abs(value) / 1_000;
+    case "negate":
+      return -Math.abs(value);
+    default:
+      return value;
+  }
+}
+
 function contradictsExtractedValue(
   entry: JudgeOutput["values"][number],
-  extractedValue: string | null | undefined,
+  value: SourceJudgeValue | undefined,
 ): boolean {
-  const extracted = parseJudgeNumber(extractedValue ?? undefined);
+  const extracted = parseJudgeNumber(value?.extractedValue ?? undefined);
   if (extracted === null) return false;
 
+  const rawSource = parseJudgeNumber(entry.sourceValue);
+  if (rawSource !== null) {
+    const transformedSource = applyJudgeTransform(rawSource, value?.valueTransform);
+    if (Math.abs(transformedSource - extracted) <= 1e-6) return false;
+  }
+  for (const reasonValue of parseJudgeNumbers(entry.reason)) {
+    if (Math.abs(reasonValue - extracted) <= 1e-6) continue;
+    const transformedReasonValue = applyJudgeTransform(reasonValue, value?.valueTransform);
+    if (Math.abs(transformedReasonValue - extracted) <= 1e-6) return false;
+  }
+
   const candidates = [
-    parseJudgeNumber(entry.sourceValue),
     parseJudgeNumber(entry.suggestedValue),
   ].filter((candidate): candidate is number => candidate !== null);
 
@@ -292,7 +326,7 @@ export async function runDeepSeekSourceJudge(
         const value = valuesById.get(entry.id);
         if (
           entry.verdict === "block" &&
-          !contradictsExtractedValue(entry, value?.extractedValue)
+          !contradictsExtractedValue(entry, value)
         ) {
           return [];
         }

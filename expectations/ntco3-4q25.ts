@@ -4,6 +4,7 @@ export const expectations: Expectations = {
   companyId: 8,
   ticker: "NTCO3",
   quarter: "4Q25",
+  sourceKind: "excel",
   sourceFile:
     "/Users/anibalin/Sites/2026/marcelo/public/camila/Natura_Planilha_Resultados_download.xlsx",
   minExtractedValues: 12,

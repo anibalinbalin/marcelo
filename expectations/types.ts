@@ -47,12 +47,28 @@ export interface DuplicatePair {
  */
 export type ExtractedCellExpectation = CellExpectation;
 
+export type SourceKind = "excel" | "pdf";
+
+export interface SourceEvidenceExpectation {
+  kind: "bimbo_press_release" | "pdf_sections" | "ifrs_text" | "vision_pdf";
+  /** Labels that must be present in the bounded evidence sent to the judge. */
+  requiredLabels: string[];
+  /** BIVA section codes, when the source is a structured BIVA PDF. */
+  sectionCodes?: string[];
+  /** Vision source sections, e.g. "vision:33,34", for image-heavy PDFs. */
+  visionSections?: string[];
+}
+
 export interface Expectations {
   companyId: number;
   ticker: string;
   quarter: string;
-  /** Absolute path to the source xlsx that Camila would upload. */
+  /** Source type Camila must upload for this pack. */
+  sourceKind: SourceKind;
+  /** Absolute path to the source file that Camila would upload. */
   sourceFile: string;
+  /** PDF evidence contract for the source-grounded DeepSeek judge. */
+  sourceEvidence?: SourceEvidenceExpectation;
   /**
    * Pinned extracted values to verify BEFORE approval. Keyed by
    * "SHEET:rROW" (e.g. "PROJ:r109"). Any mapping whose extracted

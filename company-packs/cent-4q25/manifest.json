@@ -5,6 +5,7 @@
   "companyName": "Grupo SBF / Centauro",
   "quarter": "4Q25",
   "status": "certification-active",
+  "sourceKind": "excel",
   "sourceFile": "public/camila/Planilha_Interativa_4T25_CENT.xlsx",
   "sourceSha256": "b427c9747c9055096f79a156d61bfb7a16f3c0a653c23be6e7a5e805a6a40f23",
   "expectationsModule": "expectations/cent-4q25.ts",

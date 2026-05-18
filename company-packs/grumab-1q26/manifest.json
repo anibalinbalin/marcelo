@@ -5,6 +5,7 @@
   "companyName": "GRUMA, S.A.B. de C.V.",
   "quarter": "1Q26",
   "status": "certification-active",
+  "sourceKind": "excel",
   "sourceFile": "public/camila/ReporteTrimestral_GRUMA_1Q26.xlsx",
   "sourceSha256": "ab66c617897abffdb942afbca77734ac8fc32db9975bee929fc1d87c6e419b06",
   "expectationsModule": "expectations/grumab-1q26.ts",

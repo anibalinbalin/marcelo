@@ -4,9 +4,21 @@ export const expectations: Expectations = {
   companyId: 6,
   ticker: "REGIONAL",
   quarter: "4Q25",
+  sourceKind: "pdf",
   sourceFile:
     "/Users/anibalin/Sites/2026/marcelo/public/camila/RA Banregio 4T25.pdf",
-  minExtractedValues: 12,
+  minExtractedValues: 15,
+  sourceEvidence: {
+    kind: "vision_pdf",
+    visionSections: ["vision:36", "vision:33,34"],
+    requiredLabels: [
+      "Margen financiero",
+      "Resultado neto",
+      "TOTAL ACTIVO",
+      "TOTAL PASIVO",
+      "TOTAL CAPITAL CONTABLE",
+    ],
+  },
 
   projPreApprovalCells: {
     "PROJ:r5":  { value: 4020, label: "Margen financiero" },

@@ -4,9 +4,21 @@ export const expectations: Expectations = {
   companyId: 3,
   ticker: "ENELCHILE",
   quarter: "3Q25",
+  sourceKind: "pdf",
   sourceFile:
     "/Users/anibalin/Sites/2026/marcelo/public/camila/Estados_Financieros_Enel_Chile_3Q25.pdf",
-  minExtractedValues: 18,
+  minExtractedValues: 22,
+  sourceEvidence: {
+    kind: "ifrs_text",
+    requiredLabels: [
+      "Ingresos de actividades ordinarias",
+      "Resultado operacional",
+      "Ganancia del periodo",
+      "Total de activos",
+      "Total pasivos",
+      "Dividendos pagados",
+    ],
+  },
 
   projPreApprovalCells: {
     "Consolidado:r11": { value: 1145.082, label: "Ingresos de actividades ordinarias" },

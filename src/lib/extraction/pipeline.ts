@@ -14,6 +14,10 @@ import { eq, and, inArray } from "drizzle-orm";
 import { extractPdfTables, type PdfSection } from "@/lib/pdf/extract";
 import { extractPdfText, type ParsedLine } from "@/lib/pdf/extract-text";
 import { extractPdfVision } from "@/lib/pdf/extract-vision";
+import {
+  buildIfrsTextJudgeEvidence,
+  buildPdfSectionJudgeEvidence,
+} from "@/lib/certification/source-evidence";
 import { getWorkbookSheetNames } from "@/lib/excel/workbook-sheets";
 import {
   runValidation,
@@ -27,10 +31,7 @@ import {
   SOURCE_GUARD_FAILED,
   runSourceGuards,
 } from "@/lib/validation/source-guards";
-import {
-  extractBimboJudgeEvidence,
-  runDeepSeekSourceJudge,
-} from "@/lib/validation/source-judge";
+import { extractBimboJudgeEvidence, runDeepSeekSourceJudge } from "@/lib/validation/source-judge";
 
 // ── Extraction result type ──────────────────────────────────────────────────
 
@@ -79,29 +80,6 @@ function applyTransform(
     default:
       return rawValue;
   }
-}
-
-function buildPdfSectionJudgeEvidence(sections: PdfSection[]): string {
-  const lines: string[] = [];
-  for (const section of sections) {
-    lines.push(`SECTION ${section.code}`);
-    for (const table of section.tables) {
-      lines.push(`page=${table.page} headers=${table.headers.join(" | ")}`);
-      for (const row of table.rows) {
-        const values = row.values.map((value) => value ?? "null").join(" | ");
-        lines.push(`${row.label}: ${values}`);
-        if (lines.length >= 220) return lines.join("\n");
-      }
-    }
-  }
-  return lines.join("\n");
-}
-
-function buildIfrsTextJudgeEvidence(lines: ParsedLine[]): string {
-  return lines
-    .slice(0, 220)
-    .map((line) => `${line.label} [page=${line.page}]: ${line.values.join(" | ")}`)
-    .join("\n");
 }
 
 function buildXlsxJudgeEvidence(

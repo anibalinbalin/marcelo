@@ -66,6 +66,12 @@ export async function runCamilaPreApprovalGate(runId: number): Promise<CamilaGat
   const failures: string[] = [];
   const failedIds = new Map<number, string>();
 
+  if (company.sourceType !== pack.expectations.sourceKind) {
+    failures.push(
+      `Camila gate: company source type ${company.sourceType} does not match pack source kind ${pack.expectations.sourceKind}`,
+    );
+  }
+
   if (rows.length < pack.expectations.minExtractedValues) {
     failures.push(
       `Camila gate: extracted ${rows.length}, expected at least ${pack.expectations.minExtractedValues}`,

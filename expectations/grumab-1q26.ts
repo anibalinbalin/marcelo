@@ -4,6 +4,7 @@ export const expectations: Expectations = {
   companyId: 9,
   ticker: "GRUMAB",
   quarter: "1Q26",
+  sourceKind: "excel",
   sourceFile:
     "/Users/anibalin/Sites/2026/marcelo/public/camila/ReporteTrimestral_GRUMA_1Q26.xlsx",
   minExtractedValues: 30,

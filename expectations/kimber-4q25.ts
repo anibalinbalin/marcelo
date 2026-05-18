@@ -4,9 +4,22 @@ export const expectations: Expectations = {
   companyId: 5,
   ticker: "KIMBER",
   quarter: "4Q25",
+  sourceKind: "pdf",
   sourceFile:
     "/Users/anibalin/Sites/2026/marcelo/public/camila/ReporteTrimestral_KIMBER_2025_4D_111323-260211-dc210583_1770875016982 (2).pdf",
-  minExtractedValues: 18,
+  minExtractedValues: 21,
+  sourceEvidence: {
+    kind: "pdf_sections",
+    sectionCodes: ["[210000]", "[310000]"],
+    requiredLabels: [
+      "Ingresos",
+      "Utilidad bruta",
+      "Efectivo y equivalentes de efectivo",
+      "Total de activos circulantes",
+      "Total de pasivos circulantes",
+      "Total de la participación controladora",
+    ],
+  },
 
   projPreApprovalCells: {
     "PROJ:r3":  { value: 14057.927, label: "Ingresos" },

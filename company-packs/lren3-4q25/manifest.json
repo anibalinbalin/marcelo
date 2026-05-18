@@ -5,6 +5,7 @@
   "companyName": "Lojas Renner",
   "quarter": "4Q25",
   "status": "certification-active",
+  "sourceKind": "excel",
   "sourceFile": "public/camila/Renner Planilhas e Fundamentos  (6).xlsx",
   "sourceSha256": "62ca8179e27448db0997af4b622e8dde689c9935e08b4751f1f4e4eabd9c9d00",
   "expectationsModule": "expectations/lren3-4q25.ts",
