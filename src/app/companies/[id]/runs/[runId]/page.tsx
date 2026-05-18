@@ -48,6 +48,10 @@ export default async function RunReviewPage({ params }: Props) {
         analystOverride: v.analystOverride,
         sourceLabel: mapping.sourceLabel,
         sourceSection: mapping.sourceSection,
+        sourceRow: mapping.sourceRow,
+        sourceCol: mapping.sourceCol,
+        valueTransform: mapping.valueTransform,
+        mappingConfidence: mapping.confidenceScore ?? 0.5,
         targetSheet: mapping.targetSheet,
         targetRow: mapping.targetRow,
         targetCellAddress: getTargetCellAddress({

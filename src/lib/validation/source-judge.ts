@@ -182,7 +182,7 @@ Rules:
 EXTRACTED VALUES:
 ${valuesTable(values)}
 
-PDF EVIDENCE SNIPPETS:
+SOURCE EVIDENCE SNIPPETS:
 ${evidence || "(no relevant evidence extracted)"}
 
 Return structured JSON with an overallStatus and one verdict per disputed or reviewed value.`;

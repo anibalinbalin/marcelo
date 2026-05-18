@@ -55,6 +55,9 @@ export default async function CompanyDetailPage({
             </div>
           </div>
           <div className="flex gap-2">
+            <Button size="sm" variant="outline" asChild>
+              <Link href={`/companies/${id}/onboarding`}>Teach From Base File</Link>
+            </Button>
             <Button size="sm" asChild>
               <Link href={`/companies/${id}/upload`}>Upload New Quarter</Link>
             </Button>

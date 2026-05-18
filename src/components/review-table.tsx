@@ -22,6 +22,10 @@ export interface ExtractedValueWithMapping {
   analystOverride: string | null;
   sourceLabel: string;
   sourceSection: string | null;
+  sourceRow: number | null;
+  sourceCol: string | null;
+  valueTransform: string | null;
+  mappingConfidence: number;
   targetCellAddress: string;
   targetSheet: string;
   targetRow: number;
@@ -60,6 +64,14 @@ const FLAGGED_STATUSES = new Set([
   "deepseek_judge_failed",
   "deepseek_judge_needs_review",
 ]);
+
+function isExceptionValue(value: ExtractedValueWithMapping): boolean {
+  return Boolean(
+    value.analystOverride ||
+      value.mappingConfidence < 0.95 ||
+      (value.validationStatus && FLAGGED_STATUSES.has(value.validationStatus)),
+  );
+}
 
 function StatusCell({
   status,
@@ -192,16 +204,15 @@ export function ReviewTable({
   onOverride,
 }: ReviewTableProps) {
   const filtered = showFlaggedOnly
-    ? values.filter(
-        (v) => v.validationStatus && FLAGGED_STATUSES.has(v.validationStatus)
-      )
+    ? values.filter(isExceptionValue)
     : values;
+  const hiddenCount = values.length - filtered.length;
 
   if (filtered.length === 0) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
         {showFlaggedOnly
-          ? "No flagged values in this sheet."
+          ? "No exceptions in this sheet."
           : "No extracted values in this sheet."}
       </div>
     );
@@ -217,6 +228,7 @@ export function ReviewTable({
           <TableHead className="text-xs">Extracted Value</TableHead>
           <TableHead className="text-xs">Confidence</TableHead>
           <TableHead className="text-xs">Status</TableHead>
+          <TableHead className="text-xs">Reasoning</TableHead>
           <TableHead className="text-xs">Override</TableHead>
         </TableRow>
       </TableHeader>
@@ -230,19 +242,38 @@ export function ReviewTable({
               {v.targetCellAddress}
             </TableCell>
             <TableCell className="text-sm text-muted-foreground">
-              {v.sourceSection ?? "--"}
+              <div>{v.sourceSection ?? "--"}</div>
+              {v.sourceRow && (
+                <div className="font-[family-name:var(--font-geist-mono)] text-[11px] text-muted-foreground">
+                  row {v.sourceRow}
+                  {v.sourceCol ? ` / ${v.sourceCol}` : ""}
+                </div>
+              )}
             </TableCell>
             <TableCell className="font-[family-name:var(--font-geist-mono)] text-sm">
               {v.extractedValue}
             </TableCell>
             <TableCell>
-              <ConfidenceDot confidence={v.confidence} />
+              <div className="space-y-1">
+                <ConfidenceDot confidence={v.confidence} />
+                <div className="font-[family-name:var(--font-geist-mono)] text-[11px] text-muted-foreground">
+                  map {(v.mappingConfidence * 100).toFixed(0)}%
+                </div>
+              </div>
             </TableCell>
             <TableCell>
               <StatusCell
                 status={v.validationStatus}
                 message={v.validationMessage}
               />
+            </TableCell>
+            <TableCell className="max-w-72 text-xs text-muted-foreground">
+              <div>
+                {v.valueTransform ?? "no transform"} into {v.targetCellAddress}
+              </div>
+              {v.validationMessage && (
+                <div className="mt-1 line-clamp-2">{v.validationMessage}</div>
+              )}
             </TableCell>
             <TableCell>
               <OverrideCell
@@ -253,6 +284,13 @@ export function ReviewTable({
             </TableCell>
           </TableRow>
         ))}
+        {showFlaggedOnly && hiddenCount > 0 && (
+          <TableRow className="border-zinc-800/50">
+            <TableCell colSpan={8} className="py-3 text-center text-xs text-muted-foreground">
+              {hiddenCount} high-confidence values hidden in exceptions view.
+            </TableCell>
+          </TableRow>
+        )}
       </TableBody>
     </Table>
   );

@@ -104,6 +104,38 @@ function buildIfrsTextJudgeEvidence(lines: ParsedLine[]): string {
     .join("\n");
 }
 
+function buildXlsxJudgeEvidence(
+  values: {
+    id: number;
+    mappingId: number | null;
+    extractedValue: string | null;
+    rawValue: number;
+    transformedValue: number;
+  }[],
+  mappings: typeof fieldMappings.$inferSelect[],
+): string {
+  return values
+    .slice(0, 220)
+    .map((value) => {
+      const mapping = mappings.find((m) => m.id === value.mappingId);
+      if (!mapping) return null;
+      const sourceRow = mapping.sourceRow ? ` row=${mapping.sourceRow}` : "";
+      const sourceCol = mapping.sourceCol ? ` col=${mapping.sourceCol}` : "";
+      const transform = mapping.valueTransform ?? "none";
+      return [
+        `id=${value.id}`,
+        `source=${mapping.sourceSection ?? "unknown"}${sourceRow}${sourceCol}`,
+        `label="${mapping.sourceLabel}"`,
+        `raw=${value.rawValue}`,
+        `transform=${transform}`,
+        `extracted=${value.extractedValue ?? value.transformedValue}`,
+        `target=${mapping.targetSheet}!row ${mapping.targetRow}`,
+      ].join(" | ");
+    })
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
+
 // ── Adversarial validation helper ───────────────────────────────────────────
 
 /**
@@ -643,6 +675,11 @@ async function extractFromBivaExcel(
     extractedValue: string;
     confidence: number;
   }[] = [];
+  const sourceEvidenceRows: {
+    mappingId: number;
+    rawValue: number;
+    transformedValue: number;
+  }[] = [];
 
   // Cache: sectionCode → { label→value, row→value }
   const labelCache = new Map<string, Map<string, number>>();
@@ -748,6 +785,11 @@ async function extractFromBivaExcel(
       extractedValue: transformed.toFixed(6),
       confidence: 1.0,
     });
+    sourceEvidenceRows.push({
+      mappingId: mapping.id,
+      rawValue: value,
+      transformedValue: transformed,
+    });
   }
 
   if (valuesToInsert.length === 0) {
@@ -782,8 +824,54 @@ async function extractFromBivaExcel(
     validationResults
   );
 
-  // Skip DeepSeek judge for BIVA XLSX — extraction is a deterministic cell read,
-  // and the evidence serializer is a strictly worse channel than the extractor itself.
+  const evidenceByMappingId = new Map(sourceEvidenceRows.map((row) => [row.mappingId, row]));
+  const sourceJudgeEvidence = buildXlsxJudgeEvidence(
+    inserted.map((value) => {
+      const evidence = evidenceByMappingId.get(value.mappingId!);
+      return {
+        id: value.id,
+        mappingId: value.mappingId,
+        extractedValue: value.extractedValue,
+        rawValue: evidence?.rawValue ?? Number(value.extractedValue),
+        transformedValue: evidence?.transformedValue ?? Number(value.extractedValue),
+      };
+    }),
+    mappings,
+  );
+  const sourceJudgeResult = await runDeepSeekSourceJudge(
+    _companyId,
+    inserted.map((value) => {
+      const mapping = mappings.find((m) => m.id === value.mappingId)!;
+      return {
+        id: value.id,
+        sourceLabel: mapping.sourceLabel,
+        sourceSection: mapping.sourceSection,
+        extractedValue: value.extractedValue,
+        targetSheet: mapping.targetSheet,
+        targetRow: mapping.targetRow,
+        valueTransform: mapping.valueTransform,
+      };
+    }),
+    sourceJudgeEvidence,
+  );
+
+  const sourceJudgeFlaggedIds = new Set<number>();
+  if (sourceJudgeResult.status === "error") {
+    errors.push(sourceJudgeResult.message);
+  }
+  for (const failure of sourceJudgeResult.failures) {
+    errors.push(failure.message);
+    if (failure.valueId === null) continue;
+    sourceJudgeFlaggedIds.add(failure.valueId);
+    await db
+      .update(extractedValues)
+      .set({
+        validationStatus: failure.status,
+        validationMessage: failure.message,
+      })
+      .where(eq(extractedValues.id, failure.valueId));
+  }
+
   await db
     .update(extractionRuns)
     .set({ status: "extracted", extractedAt: new Date() })
@@ -791,10 +879,12 @@ async function extractFromBivaExcel(
 
   return {
     extracted: inserted.length,
-    validated: validationResults.filter((r) => r.status === "pass").length,
+    validated: validationResults.filter(
+      (r) => r.status === "pass" && !sourceJudgeFlaggedIds.has(r.id),
+    ).length,
     adversarialTriggered: adversarialCheck.triggered,
     adversarialResult: adversarialCheck.result?.status,
-    sourceJudgeResult: "skipped" as const,
+    sourceJudgeResult: sourceJudgeResult.status,
     errors,
   };
 }
@@ -918,6 +1008,11 @@ async function extractFromExcel(
     extractedValue: string;
     confidence: number;
   }[] = [];
+  const sourceEvidenceRows: {
+    mappingId: number;
+    rawValue: number;
+    transformedValue: number;
+  }[] = [];
 
   for (const mapping of mappings) {
     if (!mapping.sourceSection || !mapping.sourceCol) {
@@ -965,6 +1060,11 @@ async function extractFromExcel(
       extractedValue: transformed.toFixed(6),
       confidence: 1.0, // Excel values are exact
     });
+    sourceEvidenceRows.push({
+      mappingId: mapping.id,
+      rawValue: value,
+      transformedValue: transformed,
+    });
   }
 
   if (valuesToInsert.length === 0) {
@@ -1001,6 +1101,54 @@ async function extractFromExcel(
     validationResults
   );
 
+  const evidenceByMappingId = new Map(sourceEvidenceRows.map((row) => [row.mappingId, row]));
+  const sourceJudgeEvidence = buildXlsxJudgeEvidence(
+    inserted.map((value) => {
+      const evidence = evidenceByMappingId.get(value.mappingId!);
+      return {
+        id: value.id,
+        mappingId: value.mappingId,
+        extractedValue: value.extractedValue,
+        rawValue: evidence?.rawValue ?? Number(value.extractedValue),
+        transformedValue: evidence?.transformedValue ?? Number(value.extractedValue),
+      };
+    }),
+    mappings,
+  );
+  const sourceJudgeResult = await runDeepSeekSourceJudge(
+    _companyId,
+    inserted.map((value) => {
+      const mapping = mappings.find((m) => m.id === value.mappingId)!;
+      return {
+        id: value.id,
+        sourceLabel: mapping.sourceLabel,
+        sourceSection: mapping.sourceSection,
+        extractedValue: value.extractedValue,
+        targetSheet: mapping.targetSheet,
+        targetRow: mapping.targetRow,
+        valueTransform: mapping.valueTransform,
+      };
+    }),
+    sourceJudgeEvidence,
+  );
+
+  const sourceJudgeFlaggedIds = new Set<number>();
+  if (sourceJudgeResult.status === "error") {
+    errors.push(sourceJudgeResult.message);
+  }
+  for (const failure of sourceJudgeResult.failures) {
+    errors.push(failure.message);
+    if (failure.valueId === null) continue;
+    sourceJudgeFlaggedIds.add(failure.valueId);
+    await db
+      .update(extractedValues)
+      .set({
+        validationStatus: failure.status,
+        validationMessage: failure.message,
+      })
+      .where(eq(extractedValues.id, failure.valueId));
+  }
+
   await db
     .update(extractionRuns)
     .set({ status: "extracted", extractedAt: new Date() })
@@ -1008,9 +1156,12 @@ async function extractFromExcel(
 
   return {
     extracted: inserted.length,
-    validated: validationResults.filter((r) => r.status === "pass").length,
+    validated: validationResults.filter(
+      (r) => r.status === "pass" && !sourceJudgeFlaggedIds.has(r.id),
+    ).length,
     adversarialTriggered: adversarialCheck.triggered,
     adversarialResult: adversarialCheck.result?.status,
+    sourceJudgeResult: sourceJudgeResult.status,
     errors,
   };
 }

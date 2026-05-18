@@ -1,6 +1,7 @@
 import { put } from "@vercel/blob";
 import { createRun, updateRunStatus } from "@/app/actions/runs";
 import { getCompany } from "@/app/actions/companies";
+import { runCamilaPreApprovalGate } from "@/lib/certification/camila-gate";
 import { runExtractionPipeline } from "@/lib/extraction/pipeline";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -77,13 +78,20 @@ export async function POST(request: NextRequest) {
       }, { status: 200 }); // 200 because the upload succeeded; extraction failed
     }
 
+    const camilaGate = await runCamilaPreApprovalGate(run.id);
+
     return NextResponse.json({
       runId: run.id,
       status: "extracted",
       sourceFileUrl: blob.url,
       extracted: pipelineResult.extracted,
-      validated: pipelineResult.validated,
-      warnings: pipelineResult.errors,
+      validated:
+        camilaGate.status === "fail"
+          ? Math.max(0, pipelineResult.validated - camilaGate.failures.length)
+          : pipelineResult.validated,
+      sourceJudgeResult: pipelineResult.sourceJudgeResult,
+      camilaGate,
+      warnings: [...pipelineResult.errors, ...camilaGate.failures],
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Upload failed";

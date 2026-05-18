@@ -110,6 +110,7 @@ export async function approveValues(
       extractedValue: extractedValues.extractedValue,
       validationStatus: extractedValues.validationStatus,
       validationMessage: extractedValues.validationMessage,
+      mappingId: extractedValues.mappingId,
       sourceLabel: fieldMappings.sourceLabel,
       sourceSection: fieldMappings.sourceSection,
     })
@@ -241,6 +242,70 @@ export async function approveValues(
         .update(extractedValues)
         .set({ analystOverride: newValue })
         .where(eq(extractedValues.id, id));
+    }
+  }
+
+  const overrideIds = new Set(overrides?.map((override) => override.id) ?? []);
+  const usedMappingIds = [
+    ...new Set(
+      approvalValues
+        .map((value) => value.mappingId)
+        .filter((id): id is number => id !== null),
+    ),
+  ];
+  if (usedMappingIds.length > 0) {
+    const mappings = await db
+      .select()
+      .from(fieldMappings)
+      .where(inArray(fieldMappings.id, usedMappingIds));
+    const valueByMappingId = new Map(
+      approvalValues
+        .filter((value) => value.mappingId !== null)
+        .map((value) => [value.mappingId!, value]),
+    );
+
+    for (const mapping of mappings) {
+      const value = valueByMappingId.get(mapping.id);
+      const hadOverride = value ? overrideIds.has(value.id) : false;
+      const previousConfidence = mapping.confidenceScore ?? 0.5;
+      const nextConfidence = hadOverride
+        ? Math.max(0.1, previousConfidence - 0.2)
+        : Math.min(0.99, previousConfidence + 0.03);
+      const nextCorrectionCount =
+        (mapping.correctionCount ?? 0) + (hadOverride ? 1 : 0);
+
+      await db
+        .update(fieldMappings)
+        .set({
+          confidenceScore: nextConfidence,
+          correctionCount: nextCorrectionCount,
+          lastVerifiedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(fieldMappings.id, mapping.id));
+
+      await db.insert(learningEvents).values({
+        eventType: "confidence_updated",
+        entityType: "field_mapping",
+        entityId: mapping.id,
+        mappingId: mapping.id,
+        runId,
+        companyId: runForApproval.companyId,
+        extractedValueId: value?.id,
+        sourceLabel: mapping.sourceLabel,
+        previousState: {
+          confidenceScore: previousConfidence,
+          correctionCount: mapping.correctionCount,
+        },
+        newState: {
+          confidenceScore: nextConfidence,
+          correctionCount: nextCorrectionCount,
+        },
+        reason: hadOverride ? "analyst_override" : "analyst_approved",
+        trigger: hadOverride ? "analyst_override" : "auto_merge",
+        actorType: "analyst",
+        actorId: approvedBy,
+      }).onConflictDoNothing();
     }
   }
 

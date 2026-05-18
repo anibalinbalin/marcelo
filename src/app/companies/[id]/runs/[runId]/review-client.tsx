@@ -67,7 +67,7 @@ function StatusBadge({ status }: { status: string }) {
 
 export function ReviewClient({ company, run, values }: ReviewClientProps) {
   const router = useRouter();
-  const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
+  const [showFlaggedOnly, setShowFlaggedOnly] = useState(true);
   const [analystName, setAnalystName] = useState("");
   const [overrides, setOverrides] = useState<Map<number, string>>(new Map());
   const [isApproving, setIsApproving] = useState(false);
@@ -350,14 +350,14 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
               <div className="flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
                   {values.length} extracted values across {sheetNames.length}{" "}
-                  sheets
+                  sheets. Exceptions are shown first.
                 </p>
                 <Button
                   variant={showFlaggedOnly ? "secondary" : "outline"}
                   size="sm"
                   onClick={() => setShowFlaggedOnly((prev) => !prev)}
                 >
-                  {showFlaggedOnly ? "Show all" : "Show flagged only"}
+                  {showFlaggedOnly ? "Show all values" : "Show exceptions"}
                 </Button>
               </div>
 
