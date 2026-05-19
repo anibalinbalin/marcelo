@@ -18,6 +18,12 @@ type TargetValue = {
   address: string;
 };
 
+type CandidateMatch = {
+  candidate: MappingCandidate;
+  sourceKey: string;
+  similarity: number;
+};
+
 const TRANSFORMS: Array<{ name: string | null; apply: (value: number) => number }> = [
   { name: "divide_1000", apply: (value) => value / 1000 },
   { name: "negate_divide_1000", apply: (value) => -value / 1000 },
@@ -153,40 +159,90 @@ function closeEnough(a: number, b: number): boolean {
   return Math.abs(a - b) <= tolerance;
 }
 
+function sourceKey(source: SourceRow): string {
+  return `${source.sheetName}:${source.row}:${source.sourceCol ?? ""}`;
+}
+
+function candidateForMatch(
+  target: TargetValue,
+  source: SourceRow,
+  transform: { name: string | null; apply: (value: number) => number },
+): CandidateMatch | null {
+  const transformed = transform.apply(source.value);
+  if (!closeEnough(transformed, target.value)) return null;
+  const similarity = tokenSimilarity(source.label, target.target.label);
+  const confidence = Math.min(0.99, 0.72 + similarity * 0.24 + (transform.name ? 0.02 : 0));
+  return {
+    sourceKey: sourceKey(source),
+    similarity,
+    candidate: {
+      target: target.target,
+      sourceLabel: source.label,
+      sourceSection: source.section,
+      sourceRow: source.row,
+      sourceCol: source.sourceCol,
+      targetColBase: target.target.colLetter,
+      valueTransform: transform.name,
+      confidence,
+      proposedBy: "XLSX",
+      reasoning:
+        `Matched Camila's ${target.address} value ${target.value} to ${source.address} ` +
+        `using ${transform.name ?? "no transform"}; label similarity ${(similarity * 100).toFixed(0)}%.`,
+      evidence: {
+        sourceValue: source.value,
+        targetValue: target.value,
+        transformedValue: transformed,
+        sourceAddress: source.address,
+        targetAddress: target.address,
+        transform: transform.name,
+      },
+    },
+  };
+}
+
 function bestCandidateForTarget(target: TargetValue, sourceRows: SourceRow[]): MappingCandidate | null {
-  let best: MappingCandidate | null = null;
+  const matches: CandidateMatch[] = [];
   for (const source of sourceRows) {
     for (const transform of TRANSFORMS) {
-      const transformed = transform.apply(source.value);
-      if (!closeEnough(transformed, target.value)) continue;
-      const similarity = tokenSimilarity(source.label, target.target.label);
-      const confidence = Math.min(0.99, 0.72 + similarity * 0.24 + (transform.name ? 0.02 : 0));
-      const candidate: MappingCandidate = {
-        target: target.target,
-        sourceLabel: source.label,
-        sourceSection: source.section,
-        sourceRow: source.row,
-        sourceCol: source.sourceCol,
-        targetColBase: target.target.colLetter,
-        valueTransform: transform.name,
-        confidence,
-        proposedBy: "XLSX",
-        reasoning:
-          `Matched Camila's ${target.address} value ${target.value} to ${source.address} ` +
-          `using ${transform.name ?? "no transform"}; label similarity ${(similarity * 100).toFixed(0)}%.`,
-        evidence: {
-          sourceValue: source.value,
-          targetValue: target.value,
-          transformedValue: transformed,
-          sourceAddress: source.address,
-          targetAddress: target.address,
-          transform: transform.name,
-        },
-      };
-      if (!best || candidate.confidence > best.confidence) best = candidate;
+      const match = candidateForMatch(target, source, transform);
+      if (match) matches.push(match);
     }
   }
-  return best;
+  if (matches.length === 0) return null;
+
+  matches.sort((a, b) => b.candidate.confidence - a.candidate.confidence);
+  const best = matches[0].candidate;
+  const reviewReasons: string[] = [];
+  const distinctSourceMatches = new Set(matches.map((match) => match.sourceKey));
+  const nearTieCount = matches.filter(
+    (match) =>
+      match.sourceKey !== matches[0].sourceKey &&
+      match.candidate.confidence >= best.confidence - 0.03,
+  ).length;
+
+  if (distinctSourceMatches.size > 1) {
+    reviewReasons.push(
+      `${distinctSourceMatches.size} source rows can explain ${target.address}`,
+    );
+  }
+  if (nearTieCount > 0) {
+    reviewReasons.push(`${nearTieCount} near-tie value match${nearTieCount === 1 ? "" : "es"}`);
+  }
+  if (matches[0].similarity < 0.25) {
+    reviewReasons.push("label similarity is weak");
+  }
+  if (!matches[0].candidate.sourceCol) {
+    reviewReasons.push("source period column was inferred from a fallback header");
+  }
+
+  if (reviewReasons.length === 0) return best;
+
+  return {
+    ...best,
+    confidence: Math.min(best.confidence, 0.84),
+    reviewReasons,
+    reasoning: `${best.reasoning} Needs analyst review: ${reviewReasons.join("; ")}.`,
+  };
 }
 
 export async function suggestXlsxMappings(

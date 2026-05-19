@@ -42,4 +42,31 @@ describe("suggestXlsxMappings", () => {
       targetAddress: "PROJ!B3",
     });
   });
+
+  it("marks duplicate value matches as review-required instead of high-confidence auto-accept", async () => {
+    const base = new ExcelJS.Workbook();
+    const proj = base.addWorksheet("PROJ");
+    proj.getCell("A3").value = "Ingresos";
+    proj.getCell("B3").value = 1000;
+
+    const source = new ExcelJS.Workbook();
+    const sheet = source.addWorksheet("310000");
+    sheet.getCell("A3").value = "Concepto";
+    sheet.getCell("B3").value = "Trimestre Actual";
+    sheet.getCell("A4").value = "Ingresos";
+    sheet.getCell("B4").value = 1000000;
+    sheet.getCell("A5").value = "Ventas netas";
+    sheet.getCell("B5").value = 1000000;
+
+    const result = await suggestXlsxMappings(
+      await workbookBuffer(base),
+      await workbookBuffer(source),
+    );
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].confidence).toBeLessThan(0.85);
+    expect(result.candidates[0].reviewReasons).toContain(
+      "2 source rows can explain PROJ!B3",
+    );
+  });
 });

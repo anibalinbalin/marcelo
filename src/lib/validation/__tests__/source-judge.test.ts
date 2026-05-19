@@ -5,6 +5,11 @@ import {
   runDeepSeekSourceJudge,
   type SourceJudgeValue,
 } from "../source-judge";
+import {
+  isHardApprovalBlock,
+  isSoftApprovalBlock,
+  validateApprovalOverride,
+} from "../source-guards";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
 
@@ -259,5 +264,54 @@ describe("runDeepSeekSourceJudge", () => {
         status: DEEPSEEK_JUDGE_FAILED,
       }),
     ]);
+  });
+});
+
+describe("approval gate helpers", () => {
+  it("keeps source guard and DeepSeek block verdicts hard-blocking", () => {
+    expect(isHardApprovalBlock("source_guard_failed")).toBe(true);
+    expect(isHardApprovalBlock("deepseek_judge_failed")).toBe(true);
+    expect(isSoftApprovalBlock("deepseek_judge_failed")).toBe(false);
+  });
+
+  it("requires a non-empty reasoned correction for soft failures", () => {
+    const currentValue = {
+      extractedValue: "100.000000",
+      validationStatus: "fail",
+    };
+
+    expect(validateApprovalOverride(currentValue, undefined)).toBe(
+      "missing analyst correction",
+    );
+    expect(validateApprovalOverride(currentValue, { value: "", reason: "wrong_source_match" })).toBe(
+      "correction is blank",
+    );
+    expect(validateApprovalOverride(currentValue, { value: "101", reason: undefined })).toBe(
+      "correction reason is required",
+    );
+    expect(
+      validateApprovalOverride(currentValue, {
+        value: "100.000000",
+        reason: "wrong_source_match",
+      }),
+    ).toBe("correction must change the flagged value");
+  });
+
+  it("accepts numeric reasoned corrections for soft failures", () => {
+    expect(
+      validateApprovalOverride(
+        { extractedValue: "100.000000", validationStatus: "deepseek_judge_needs_review" },
+        { value: "101.25", reason: "wrong_source_match" },
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects non-numeric corrections when the extracted value is numeric", () => {
+    expect(
+      validateApprovalOverride(
+        { extractedValue: "100.000000", validationStatus: "error" },
+        { value: "not a number", reason: "wrong_source_match" },
+      ),
+    ).toBe("correction must be numeric");
   });
 });

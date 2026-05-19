@@ -10,13 +10,21 @@ import {
 } from "@/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
 import {
-  SOURCE_GUARD_FAILED,
+  isApprovalBlockingStatus,
+  isHardApprovalBlock,
   runSourceGuards,
+  validateApprovalOverride,
 } from "@/lib/validation/source-guards";
-import {
-  DEEPSEEK_JUDGE_FAILED,
-  DEEPSEEK_JUDGE_NEEDS_REVIEW,
-} from "@/lib/validation/source-judge";
+import { runCamilaPreApprovalGate } from "@/lib/certification/camila-gate";
+
+function effectiveExtractedValue(
+  value: { id: number; extractedValue: string | null },
+  overridesById: Map<number, { value: string; reason?: string }>,
+): string | null {
+  const override = overridesById.get(value.id);
+  if (!override) return value.extractedValue;
+  return override.value.trim();
+}
 
 export async function getRuns(companyId: number) {
   const db = getDb();
@@ -93,7 +101,7 @@ export async function saveExtractedValues(
 export async function approveValues(
   runId: number,
   approvedBy: string,
-  overrides?: { id: number; value: string }[]
+  overrides?: { id: number; value: string; reason?: string }[]
 ) {
   const db = getDb();
   const [runForApproval] = await db
@@ -113,26 +121,38 @@ export async function approveValues(
       mappingId: extractedValues.mappingId,
       sourceLabel: fieldMappings.sourceLabel,
       sourceSection: fieldMappings.sourceSection,
+      targetSheet: fieldMappings.targetSheet,
+      targetRow: fieldMappings.targetRow,
     })
     .from(extractedValues)
     .innerJoin(fieldMappings, eq(extractedValues.mappingId, fieldMappings.id))
     .where(eq(extractedValues.runId, runId));
 
-  const blockingStatuses = new Set([
-    "fail",
-    "error",
-    SOURCE_GUARD_FAILED,
-    DEEPSEEK_JUDGE_FAILED,
-    DEEPSEEK_JUDGE_NEEDS_REVIEW,
-  ]);
-  const blockingValue = approvalValues.find((value) =>
-    value.validationStatus ? blockingStatuses.has(value.validationStatus) : false,
+  const overridesById = new Map(
+    (overrides ?? []).map((override) => [
+      override.id,
+      { value: override.value, reason: override.reason },
+    ]),
   );
-  if (blockingValue) {
-    throw new Error(
-      `Approval blocked: ${blockingValue.sourceLabel} has status ` +
-        `${blockingValue.validationStatus}. ${blockingValue.validationMessage ?? ""}`.trim(),
-    );
+  const overrideIds = new Set(overridesById.keys());
+
+  for (const value of approvalValues) {
+    if (!isApprovalBlockingStatus(value.validationStatus)) continue;
+
+    if (isHardApprovalBlock(value.validationStatus)) {
+      throw new Error(
+        `Approval blocked: ${value.sourceLabel} has status ` +
+          `${value.validationStatus}. ${value.validationMessage ?? ""}`.trim(),
+      );
+    }
+
+    const problem = validateApprovalOverride(value, overridesById.get(value.id));
+    if (problem) {
+      throw new Error(
+        `Approval blocked: ${value.sourceLabel} needs a valid correction (${problem}). ` +
+          `${value.validationMessage ?? ""}`.trim(),
+      );
+    }
   }
 
   const sourceGuardFailures = runSourceGuards(
@@ -141,7 +161,7 @@ export async function approveValues(
       id: value.id,
       sourceLabel: value.sourceLabel,
       sourceSection: value.sourceSection,
-      extractedValue: value.extractedValue,
+      extractedValue: effectiveExtractedValue(value, overridesById),
     })),
   );
   if (sourceGuardFailures.length > 0) {
@@ -186,11 +206,12 @@ export async function approveValues(
       : [];
     const mappingById = new Map(mappings.map((m) => [m.id, m]));
 
-    for (const { id, value: newValue } of overrides) {
+    for (const { id, value: newValue, reason } of overrides) {
       const ev = valueById.get(id);
       if (!ev) continue;
       const mapping = ev.mappingId ? mappingById.get(ev.mappingId) : null;
       const oldValue = ev.analystOverride ?? ev.extractedValue ?? null;
+      const correctionReason = reason ?? "analyst_override";
 
       // Record the event first. Idempotent via the unique index on
       // (run_id, extracted_value_id, event_type) so a double-submit is
@@ -212,8 +233,8 @@ export async function approveValues(
             confidence: ev.confidence,
             validationStatus: ev.validationStatus,
           },
-          newState: { analystOverride: newValue },
-          reason: "analyst_override",
+          newState: { analystOverride: newValue, correctionReason },
+          reason: correctionReason,
           trigger: "analyst_override",
           actorType: "analyst",
           actorId: approvedBy,
@@ -232,7 +253,7 @@ export async function approveValues(
             extractedValue: ev.extractedValue,
             analystOverride: ev.analystOverride,
           },
-          changeReason: "analyst_override",
+          changeReason: correctionReason,
           changedBy: approvedBy,
         });
       }
@@ -245,7 +266,13 @@ export async function approveValues(
     }
   }
 
-  const overrideIds = new Set(overrides?.map((override) => override.id) ?? []);
+  const camilaGate = await runCamilaPreApprovalGate(runId);
+  if (camilaGate.status === "fail") {
+    throw new Error(
+      `Approval blocked by Camila gate: ${camilaGate.failures.slice(0, 3).join("; ")}`,
+    );
+  }
+
   const usedMappingIds = [
     ...new Set(
       approvalValues

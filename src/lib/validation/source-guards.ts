@@ -1,3 +1,8 @@
+import {
+  DEEPSEEK_JUDGE_FAILED,
+  DEEPSEEK_JUDGE_NEEDS_REVIEW,
+} from "./source-judge";
+
 export const SOURCE_GUARD_FAILED = "source_guard_failed";
 
 export interface SourceGuardValue {
@@ -26,6 +31,26 @@ const BIMBO_PRESS_RELEASE_REGIONS = [
   "EAA",
   "Latinoamérica",
 ];
+const SOFT_APPROVAL_BLOCKING_STATUSES = new Set([
+  "fail",
+  "error",
+  DEEPSEEK_JUDGE_NEEDS_REVIEW,
+]);
+const HARD_APPROVAL_BLOCKING_STATUSES = new Set([
+  SOURCE_GUARD_FAILED,
+  DEEPSEEK_JUDGE_FAILED,
+]);
+const APPROVAL_BLOCKING_STATUSES = new Set([
+  ...SOFT_APPROVAL_BLOCKING_STATUSES,
+  ...HARD_APPROVAL_BLOCKING_STATUSES,
+]);
+const CORRECTION_REASONS = new Set([
+  "wrong_source_match",
+  "wrong_sign_or_scale",
+  "wrong_target_row",
+  "missing_value",
+  "analyst_override",
+]);
 
 function parseValue(value: string | null): number | null {
   if (value === null) return null;
@@ -84,3 +109,43 @@ export function runSourceGuards(
   return failures;
 }
 
+export function isHardApprovalBlock(status: string | null | undefined): boolean {
+  return Boolean(status && HARD_APPROVAL_BLOCKING_STATUSES.has(status));
+}
+
+export function isSoftApprovalBlock(status: string | null | undefined): boolean {
+  return Boolean(status && SOFT_APPROVAL_BLOCKING_STATUSES.has(status));
+}
+
+export function isApprovalBlockingStatus(status: string | null | undefined): boolean {
+  return Boolean(status && APPROVAL_BLOCKING_STATUSES.has(status));
+}
+
+export function validateApprovalOverride(
+  currentValue: { extractedValue: string | null; validationStatus: string | null },
+  override: { value: string; reason?: string } | undefined,
+): string | null {
+  if (!override) return "missing analyst correction";
+
+  const nextValue = override.value.trim();
+  if (!nextValue) return "correction is blank";
+
+  if (!override.reason || !CORRECTION_REASONS.has(override.reason)) {
+    return "correction reason is required";
+  }
+
+  const existingNumber = Number(currentValue.extractedValue);
+  if (Number.isFinite(existingNumber) && !Number.isFinite(Number(nextValue))) {
+    return "correction must be numeric";
+  }
+
+  if (
+    isSoftApprovalBlock(currentValue.validationStatus) &&
+    currentValue.extractedValue != null &&
+    nextValue === currentValue.extractedValue.trim()
+  ) {
+    return "correction must change the flagged value";
+  }
+
+  return null;
+}

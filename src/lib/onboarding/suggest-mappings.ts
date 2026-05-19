@@ -45,6 +45,8 @@ export interface MappingCandidate {
   proposedBy: "A" | "B" | "AB" | "XLSX";
   /** Reasoning for this mapping */
   reasoning: string;
+  /** Analyst-facing reasons this candidate should not be accepted silently */
+  reviewReasons?: string[];
   /** Compact audit evidence for the analyst-facing review */
   evidence?: {
     sourceValue?: number | null;

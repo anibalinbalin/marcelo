@@ -32,19 +32,27 @@ export function ApprovalBar({
   return (
     <div className="fixed inset-x-0 bottom-0 z-50 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur-sm">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-6">
-        {/* Left: Counts */}
+        {/* Left: Counts — only color non-zero values */}
         <div className="flex items-center gap-3 text-sm tabular-nums">
-          <span className="text-success">
+          <span className={passingCount > 0 ? "text-success" : "text-muted-foreground"}>
             {passingCount} passing
           </span>
-          <span className="text-muted-foreground/40">|</span>
-          <span className="text-warning">
-            {warningCount} warnings
-          </span>
-          <span className="text-muted-foreground/40">|</span>
-          <span className="text-destructive">
-            {failCount} failures
-          </span>
+          {warningCount > 0 && (
+            <>
+              <span className="text-muted-foreground/30">·</span>
+              <span className="text-warning">
+                {warningCount} warning{warningCount === 1 ? "" : "s"}
+              </span>
+            </>
+          )}
+          {failCount > 0 && (
+            <>
+              <span className="text-muted-foreground/30">·</span>
+              <span className="text-destructive">
+                {failCount} failure{failCount === 1 ? "" : "s"}
+              </span>
+            </>
+          )}
         </div>
 
         {/* Center: Analyst name */}
@@ -69,7 +77,7 @@ export function ApprovalBar({
             size="lg"
           >
             <CheckCircleIcon className="size-4" data-icon="inline-start" />
-            {isApproved ? "Approved" : "Approve All Passing"}
+            {isApproved ? "Approved" : "Approve Reviewed Values"}
           </Button>
           <Button
             variant="outline"

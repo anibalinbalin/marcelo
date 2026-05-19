@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   ReviewTable,
   type ExtractedValueWithMapping,
+  type OverrideDraft,
 } from "@/components/review-table";
 import { ApprovalBar } from "@/components/approval-bar";
 import { ThinkingDots } from "@/components/ui/thinking-dots";
@@ -20,7 +21,46 @@ import {
   AlertCircleIcon,
   CheckCircle2Icon,
   FileSpreadsheetIcon,
+  GraduationCapIcon,
+  ArrowRightIcon,
+  UploadIcon,
 } from "lucide-react";
+
+const ANALYST_NAME_KEY = "marcelo:analyst-name";
+const SOFT_APPROVAL_BLOCKING_STATUSES = new Set([
+  "fail",
+  "error",
+  "deepseek_judge_needs_review",
+]);
+const HARD_APPROVAL_BLOCKING_STATUSES = new Set([
+  "source_guard_failed",
+  "deepseek_judge_failed",
+]);
+
+function usePersistedAnalystName(): [string, (name: string) => void] {
+  const [name, setNameState] = useState("");
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(ANALYST_NAME_KEY);
+      if (stored) setNameState(stored);
+    } catch {}
+  }, []);
+
+  const setName = useCallback((next: string) => {
+    setNameState(next);
+    try {
+      if (next.trim()) localStorage.setItem(ANALYST_NAME_KEY, next.trim());
+    } catch {}
+  }, []);
+
+  return [name, setName];
+}
+
+function isMac(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /mac/i.test(navigator.userAgent);
+}
 
 interface ReviewClientProps {
   company: { id: number; name: string; ticker: string };
@@ -68,9 +108,8 @@ function StatusBadge({ status }: { status: string }) {
 
 export function ReviewClient({ company, run, values }: ReviewClientProps) {
   const router = useRouter();
-  const [showFlaggedOnly, setShowFlaggedOnly] = useState(true);
-  const [analystName, setAnalystName] = useState("");
-  const [overrides, setOverrides] = useState<Map<number, string>>(new Map());
+  const [analystName, setAnalystName] = usePersistedAnalystName();
+  const [overrides, setOverrides] = useState<Map<number, OverrideDraft>>(new Map());
   const [isApproving, setIsApproving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<{
@@ -81,6 +120,10 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
   const [cellsWritten, setCellsWritten] = useState<number | null>(null);
   const [localStatus, setLocalStatus] = useState(run.status);
   const [localApprovedBy, setLocalApprovedBy] = useState(run.approvedBy);
+
+  const isApproved = localStatus === "approved";
+
+  const [showFlaggedOnly, setShowFlaggedOnly] = useState(!isApproved);
 
   useEffect(() => {
     if (localStatus !== "pending") return;
@@ -98,7 +141,6 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
     return () => clearInterval(id);
   }, [localStatus, run.id, router]);
 
-  // Group values by target sheet
   const sheets = useMemo(() => {
     const map = new Map<string, ExtractedValueWithMapping[]>();
     for (const v of values) {
@@ -106,7 +148,6 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
       existing.push(v);
       map.set(v.targetSheet, existing);
     }
-    // Sort each sheet's values by targetRow
     for (const [, sheetValues] of map) {
       sheetValues.sort((a, b) => a.targetRow - b.targetRow);
     }
@@ -115,7 +156,6 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
 
   const sheetNames = useMemo(() => Array.from(sheets.keys()).sort(), [sheets]);
 
-  // Counts
   const { passingCount, warningCount, failCount } = useMemo(() => {
     let passing = 0;
     let warning = 0;
@@ -137,16 +177,54 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
           fail++;
           break;
         default:
-          passing++; // Treat unvalidated as passing
+          passing++;
       }
     }
     return { passingCount: passing, warningCount: warning, failCount: fail };
   }, [values]);
 
-  const handleOverride = useCallback((id: number, value: string) => {
+  const valuesById = useMemo(
+    () => new Map(values.map((value) => [value.id, value])),
+    [values],
+  );
+
+  const unresolvedBlockingCount = useMemo(() => {
+    let count = 0;
+    for (const value of values) {
+      const status = value.validationStatus;
+      if (!status) continue;
+      if (HARD_APPROVAL_BLOCKING_STATUSES.has(status)) {
+        count++;
+        continue;
+      }
+      if (
+        SOFT_APPROVAL_BLOCKING_STATUSES.has(status) &&
+        !overrides.get(value.id)?.value.trim()
+      ) {
+        count++;
+      }
+    }
+    return count;
+  }, [overrides, values]);
+
+  const overrideRows = useMemo(
+    () =>
+      Array.from(overrides.entries())
+        .map(([id, override]) => {
+          const value = valuesById.get(id);
+          return value ? { value, override } : null;
+        })
+        .filter((entry): entry is { value: ExtractedValueWithMapping; override: OverrideDraft } =>
+          Boolean(entry),
+        ),
+    [overrides, valuesById],
+  );
+
+  const handleOverride = useCallback((id: number, value: string, reason: OverrideDraft["reason"]) => {
     setOverrides((prev) => {
       const next = new Map(prev);
-      next.set(id, value);
+      if (value.trim() === "") next.delete(id);
+      else next.set(id, { value, reason });
       return next;
     });
   }, []);
@@ -158,11 +236,16 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
     setApprovalError(null);
     try {
       const overrideList = Array.from(overrides.entries()).map(
-        ([id, value]) => ({ id, value })
+        ([id, override]) => ({
+          id,
+          value: override.value,
+          reason: override.reason,
+        })
       );
       await approveValues(run.id, analystName.trim(), overrideList);
       setLocalStatus("approved");
       setLocalApprovedBy(analystName.trim());
+      setShowFlaggedOnly(false);
       router.refresh();
     } catch (err) {
       setApprovalError(
@@ -178,9 +261,6 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
     setCellsWritten(null);
     setIsDownloading(true);
     try {
-      // Always route through /api/download so the server-side integrity
-      // check runs on every download and we never ship a silently-broken
-      // file. The pre-built blob is only used as a cache hint.
       const res = await fetch(`/api/download/${run.id}`);
 
       if (!res.ok) {
@@ -222,7 +302,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
     }
   }, [run.id, run.quarter, company.ticker]);
 
-  const isApproved = localStatus === "approved";
+  const recalcShortcut = isMac() ? "Cmd+Option+F9" : "Ctrl+Alt+F9";
 
   return (
     <div className="flex min-h-screen flex-col pb-16">
@@ -234,14 +314,11 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeftIcon className="size-4" />
-            Back
+            {company.name}
           </Link>
           <div className="h-4 w-px bg-zinc-800" />
           <div className="flex-1">
             <div className="flex items-center gap-3">
-              <h1 className="text-lg font-semibold text-foreground">
-                {company.name}
-              </h1>
               <span className="font-[family-name:var(--font-geist-mono)] text-sm text-muted-foreground">
                 {run.quarter}
               </span>
@@ -262,11 +339,10 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
                 Analyzing quarterly report...
               </p>
             </div>
-            <div className="space-y-3">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-8 w-3/4" />
-              <Skeleton className="h-8 w-1/2" />
-              <Skeleton className="h-8 w-2/3" />
+            <div className="space-y-2">
+              {[1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-[52px] w-full rounded-lg" />
+              ))}
             </div>
           </div>
         )}
@@ -275,15 +351,15 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
         {localStatus === "error" && (
           <Alert variant="destructive">
             <AlertCircleIcon className="size-4" />
-            <AlertTitle>Extraction Failed</AlertTitle>
+            <AlertTitle>Extraction failed</AlertTitle>
             <AlertDescription>
               {run.errorMessage ? (
                 <>
                   <div className="font-mono text-xs break-all">{run.errorMessage}</div>
-                  <div className="mt-2">Please try uploading the report again.</div>
+                  <div className="mt-2">Try uploading the report again.</div>
                 </>
               ) : (
-                "An error occurred during extraction. Please try uploading the report again."
+                "Something went wrong during extraction. Try uploading the report again."
               )}
             </AlertDescription>
           </Alert>
@@ -301,7 +377,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
         {isDownloading && (
           <div className="mb-6 flex items-center gap-3 rounded-lg border border-info/25 bg-info/5 px-4 py-3">
             <ThinkingDots count={5} />
-            <p className="text-sm text-muted-foreground">Populating cells into template...</p>
+            <p className="text-sm text-muted-foreground">Writing values into your model...</p>
           </div>
         )}
 
@@ -325,23 +401,39 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
         {approvalError && (
           <Alert variant="destructive" className="mb-6">
             <AlertCircleIcon className="size-4" />
-            <AlertTitle>Approval blocked</AlertTitle>
+            <AlertTitle>Can't approve yet</AlertTitle>
             <AlertDescription>{approvalError}</AlertDescription>
           </Alert>
         )}
 
-        {/* Download success */}
+        {/* Download success + next steps */}
         {cellsWritten !== null && !downloadError && (
           <Alert className="mb-6 border-success/25 bg-success/5">
             <CheckCircle2Icon className="size-4 text-success" />
             <AlertTitle className="text-success">Download complete</AlertTitle>
             <AlertDescription>
-              {cellsWritten} values written to the PROJ sheet.
-              If formulas still show old results, press{" "}
-              <kbd className="rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 font-[family-name:var(--font-geist-mono)] text-xs">
-                Ctrl+Alt+F9
-              </kbd>{" "}
-              in Excel to force recalculation.
+              <p>
+                {cellsWritten} values written to the model.
+                If formulas still show old results, press{" "}
+                <kbd className="rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 font-[family-name:var(--font-geist-mono)] text-xs">
+                  {recalcShortcut}
+                </kbd>{" "}
+                in Excel to recalculate.
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/companies/${company.id}`}>
+                    <ArrowLeftIcon className="size-3.5" />
+                    Back to {company.name}
+                  </Link>
+                </Button>
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/companies/${company.id}/upload`}>
+                    <UploadIcon className="size-3.5" />
+                    Upload another quarter
+                  </Link>
+                </Button>
+              </div>
             </AlertDescription>
           </Alert>
         )}
@@ -350,7 +442,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
         {downloadError && (
           <Alert variant="destructive" className="mb-6">
             <AlertCircleIcon className="size-4" />
-            <AlertTitle>Download blocked - integrity check failed</AlertTitle>
+            <AlertTitle>Download blocked</AlertTitle>
             <AlertDescription>
               <div>{downloadError.message}</div>
               {downloadError.details.length > 0 && (
@@ -366,9 +458,8 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
                 </ul>
               )}
               <div className="mt-2 text-xs">
-                This means one or more extracted values did not land in the
-                output file. Re-upload the report to try again, or send this
-                error to Anibal.
+                Some values didn't land in the output file. Try re-uploading
+                the report, or send this error to Anibal.
               </div>
             </AlertDescription>
           </Alert>
@@ -380,29 +471,78 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
           isApproved) &&
           values.length > 0 && (
             <div className="space-y-4">
-              {/* Filter toggle */}
+              {/* Summary bar */}
               <div className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">
-                  {values.length} extracted values across {sheetNames.length}{" "}
-                  sheets. Exceptions are shown first.
-                </p>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="text-muted-foreground">
+                    {values.length} values
+                  </span>
+                  {warningCount + failCount > 0 && (
+                    <>
+                      <span className="text-muted-foreground/30">·</span>
+                      <span className="text-warning tabular-nums">
+                        {warningCount + failCount} need attention
+                      </span>
+                    </>
+                  )}
+                  {overrides.size > 0 && (
+                    <>
+                      <span className="text-muted-foreground/30">·</span>
+                      <span className="text-info tabular-nums">
+                        {overrides.size} corrected
+                      </span>
+                    </>
+                  )}
+                </div>
                 <Button
                   variant={showFlaggedOnly ? "secondary" : "outline"}
                   size="sm"
                   onClick={() => setShowFlaggedOnly((prev) => !prev)}
                 >
-                  {showFlaggedOnly ? "Show all values" : "Show exceptions"}
+                  {showFlaggedOnly ? "Show all values" : "Show exceptions only"}
                 </Button>
               </div>
 
-              {/* Inline help when there are flagged rows */}
-              {warningCount + failCount > 0 && (
+              {/* Help text for failures */}
+              {unresolvedBlockingCount > 0 && !isApproved && (
                 <p className="text-xs text-muted-foreground">
-                  Rows flagged below failed an automated sanity check. Source
-                  guard and DeepSeek source-judge failures block approval and
-                  must be fixed by re-running extraction with a corrected parser
-                  or mapping.
+                  Red rows block approval until Camila corrects the value or
+                  the source file is re-uploaded. Source guard and hard
+                  DeepSeek failures stay blocked.
                 </p>
+              )}
+
+              {/* Learning evidence — corrections summary */}
+              {overrideRows.length > 0 && (
+                <div className="rounded-lg border border-info/25 bg-info/5 px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <GraduationCapIcon className="mt-0.5 size-4 text-info" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">
+                        {overrideRows.length} correction{overrideRows.length === 1 ? "" : "s"} will be saved when you approve
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {overrideRows.map(({ value, override }) => (
+                          <div
+                            key={value.id}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-950/60 px-2.5 py-1.5"
+                          >
+                            <span className="text-xs font-medium text-foreground">
+                              {value.sourceLabel}
+                            </span>
+                            <span className="font-[family-name:var(--font-geist-mono)] text-[11px] text-muted-foreground">
+                              {value.extractedValue}
+                            </span>
+                            <ArrowRightIcon className="size-3 text-muted-foreground/50" />
+                            <span className="font-[family-name:var(--font-geist-mono)] text-[11px] text-foreground">
+                              {override.value}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               )}
 
               {/* Tabs by sheet */}
@@ -420,6 +560,8 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
                     <ReviewTable
                       values={sheets.get(name) ?? []}
                       showFlaggedOnly={showFlaggedOnly}
+                      isApproved={isApproved}
+                      overrides={overrides}
                       onOverride={handleOverride}
                     />
                   </TabsContent>
@@ -428,7 +570,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
             </div>
           )}
 
-        {/* Empty state -- no extraction data yet */}
+        {/* Empty state */}
         {(localStatus === "extracted" ||
           localStatus === "validated" ||
           isApproved) &&
@@ -439,14 +581,14 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
                 No extracted data
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Run extraction first. The extraction pipeline will be wired in a
-                future update.
+                The extraction didn't find any values to populate.
+                Try re-uploading the report.
               </p>
             </div>
           )}
       </main>
 
-      {/* Approval bar -- show when there are values and not in pending/error */}
+      {/* Approval bar */}
       {values.length > 0 &&
         localStatus !== "pending" &&
         localStatus !== "error" && (
@@ -460,7 +602,7 @@ export function ReviewClient({ company, run, values }: ReviewClientProps) {
             onDownload={handleDownload}
             isApproved={isApproved || isApproving}
             isDownloadReady={!isDownloading}
-            hasBlockingFailures={failCount > 0}
+            hasBlockingFailures={unresolvedBlockingCount > 0}
           />
         )}
     </div>

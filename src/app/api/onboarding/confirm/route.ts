@@ -20,6 +20,79 @@ interface ConfirmRequest {
   candidates: MappingCandidate[];
 }
 
+const ALLOWED_TRANSFORMS = new Set([
+  "divide_1000",
+  "negate_divide_1000",
+  "divide_1000000",
+  "negate_divide_1000000",
+  "negate",
+]);
+
+function applyCandidateTransform(value: number, transform: string | null | undefined): number {
+  switch (transform) {
+    case "divide_1000":
+      return value / 1000;
+    case "negate_divide_1000":
+      return -value / 1000;
+    case "divide_1000000":
+      return value / 1000000;
+    case "negate_divide_1000000":
+      return -value / 1000000;
+    case "negate":
+      return -value;
+    case null:
+    case undefined:
+      return value;
+    default:
+      throw new Error(`Unsupported transform "${transform}"`);
+  }
+}
+
+function closeEnough(actual: number, expected: number): boolean {
+  const tolerance = Math.max(1, Math.abs(expected) * 0.0005);
+  return Math.abs(actual - expected) <= tolerance;
+}
+
+function validateCandidate(candidate: MappingCandidate): string | null {
+  if (!candidate.target?.sheet || !Number.isInteger(candidate.target.row)) {
+    return "candidate has no stable target cell";
+  }
+  if (!candidate.sourceLabel || !candidate.sourceSection) {
+    return "candidate has no stable source row";
+  }
+  if (candidate.confidence < 0 || candidate.confidence > 1) {
+    return "candidate confidence is outside 0-1";
+  }
+  if (candidate.valueTransform && !ALLOWED_TRANSFORMS.has(candidate.valueTransform)) {
+    return `candidate uses unsupported transform "${candidate.valueTransform}"`;
+  }
+
+  if (candidate.proposedBy !== "XLSX") return null;
+
+  const evidence = candidate.evidence;
+  if (
+    !evidence ||
+    typeof evidence.sourceValue !== "number" ||
+    typeof evidence.targetValue !== "number" ||
+    typeof evidence.transformedValue !== "number" ||
+    !evidence.sourceAddress ||
+    !evidence.targetAddress
+  ) {
+    return "XLSX candidate is missing source/target evidence";
+  }
+
+  const transformed = applyCandidateTransform(evidence.sourceValue, candidate.valueTransform);
+  if (!closeEnough(transformed, evidence.targetValue)) {
+    return "XLSX candidate evidence no longer matches the transform";
+  }
+
+  if (!closeEnough(transformed, evidence.transformedValue)) {
+    return "XLSX candidate transformed value is inconsistent";
+  }
+
+  return null;
+}
+
 async function readConfirmRequest(request: NextRequest): Promise<{
   body: ConfirmRequest;
   templateFile: File | null;
@@ -55,6 +128,16 @@ export async function POST(request: NextRequest) {
         { error: "baseQuarter is required" },
         { status: 400 }
       );
+    }
+
+    for (const candidate of body.candidates) {
+      const problem = validateCandidate(candidate);
+      if (problem) {
+        return NextResponse.json(
+          { error: `Invalid mapping candidate: ${problem}` },
+          { status: 400 },
+        );
+      }
     }
 
     const db = getDb();
