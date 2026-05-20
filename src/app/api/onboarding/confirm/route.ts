@@ -163,6 +163,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Guard: don't let onboarding overwrite curated mappings
+    if (body.applyMode !== "append_only") {
+      const existing = await getDb()
+        .select({ id: fieldMappings.id })
+        .from(fieldMappings)
+        .where(
+          and(
+            eq(fieldMappings.companyId, companyId),
+            eq(fieldMappings.isActive, true),
+          ),
+        );
+      if (existing.length >= 20) {
+        return NextResponse.json(
+          {
+            error: `Company already has ${existing.length} active mappings. Use append_only mode or delete existing mappings first.`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     // Convert candidates to mapping records
     const mappingValues = candidatesToMappings(
       body.candidates,
